@@ -50,6 +50,9 @@ import type { Language, ExtractionResult } from '../types';
     }
     return realWrite(chunk as never, encoding as never, cb as never);
   }) as typeof process.stderr.write;
+
+  // Restore original stderr on worker exit so the patch doesn't leak.
+  process.once('exit', () => { process.stderr.write = realWrite; });
 }
 
 const PARSER_RESET_INTERVAL = 5000;

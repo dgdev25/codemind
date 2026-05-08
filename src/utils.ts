@@ -1,5 +1,5 @@
 /**
- * CodeGraph Utilities
+ * CodeMind Utilities
  *
  * Common utility functions for memory management, concurrency, batching,
  * and security validation.
@@ -8,7 +8,7 @@
  *
  * @example
  * ```typescript
- * import { Mutex, processInBatches, MemoryMonitor, validatePathWithinRoot } from 'codegraph';
+ * import { Mutex, processInBatches, MemoryMonitor, validatePathWithinRoot } from 'codemind';
  *
  * // Use mutex for concurrent safety
  * const mutex = new Mutex();
@@ -30,6 +30,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 // ============================================================
@@ -83,7 +84,7 @@ export function validateProjectPath(dirPath: string): string | null {
   }
 
   // Also block common sensitive home subdirectories
-  const homeDir = require('os').homedir();
+  const homeDir = os.homedir();
   const sensitiveHomeDirs = ['.ssh', '.gnupg', '.aws', '.config'];
   for (const dir of sensitiveHomeDirs) {
     const sensitivePath = path.join(homeDir, dir);
@@ -141,8 +142,9 @@ export function isPathWithinRootReal(filePath: string, rootDir: string): boolean
     const realRoot = fs.realpathSync(rootDir);
     return realPath.startsWith(realRoot + path.sep) || realPath === realRoot;
   } catch {
-    // If realpath fails (broken symlink, permissions), fall back to logical check
-    return true;
+    // Fail closed: if realpath resolution fails (broken symlink, permission denied),
+    // deny access rather than falling back to logical path which could be spoofed.
+    return false;
   }
 }
 
@@ -206,8 +208,8 @@ export class FileLock {
         // Treat locks older than the timeout as stale, regardless of PID
         if (lockAge < FileLock.STALE_TIMEOUT_MS && !isNaN(pid) && this.isProcessAlive(pid)) {
           throw new Error(
-            `CodeGraph database is locked by another process (PID ${pid}). ` +
-            `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
+            `CodeMind database is locked by another process (PID ${pid}). ` +
+            `If this is stale, run 'codemind unlock' or delete ${this.lockPath}`
           );
         }
 
@@ -230,8 +232,8 @@ export class FileLock {
       if (err.code === 'EEXIST') {
         // Race condition: another process grabbed the lock between our check and write
         throw new Error(
-          'CodeGraph database is locked by another process. ' +
-          `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
+          'CodeMind database is locked by another process. ' +
+          `If this is stale, run 'codemind unlock' or delete ${this.lockPath}`
         );
       }
       throw err;
