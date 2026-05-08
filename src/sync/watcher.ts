@@ -87,6 +87,7 @@ export class FileWatcher {
         this.projectRoot,
         { recursive: true },
         (_eventType, filename) => {
+          // filename is null on Linux kernel < 4.x and on some macOS edge cases
           if (!filename || this.stopped) return;
 
           // Normalize path separators

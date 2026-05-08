@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { SqliteDatabase } from '../db/sqlite-adapter';
+import { validatePathWithinRoot } from '../utils';
 
 interface CommunityRow {
   community_id: string;
@@ -56,7 +57,17 @@ export function generateSkillFiles(
   projectRoot: string,
   outputDir?: string,
 ): SkillGenerationResult {
-  const skillsDir = outputDir ?? path.join(projectRoot, '.claude', 'skills', 'codemind');
+  const defaultDir = path.join(projectRoot, '.claude', 'skills', 'codemind');
+  const skillsDir = outputDir ?? defaultDir;
+
+  // Reject paths that escape the project root when an override is supplied
+  if (outputDir) {
+    const safe = validatePathWithinRoot(projectRoot, outputDir);
+    if (!safe) {
+      throw new Error(`outputDir "${outputDir}" is outside the project root "${projectRoot}"`);
+    }
+  }
+
   fs.mkdirSync(skillsDir, { recursive: true });
 
   // Get top communities by member count, skipping tiny ones

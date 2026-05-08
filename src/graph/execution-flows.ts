@@ -77,15 +77,17 @@ export function findEntryPoints(queries: QueryBuilder): Node[] {
 export function computeCallChain(
   nodeId: string,
   queries: QueryBuilder,
-): FlowStep[] {
+): { steps: FlowStep[]; maxDepth: number } {
   const steps: FlowStep[] = [];
   const visited = new Set<string>();
   const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
+  let maxDepth = 0;
 
   while (queue.length > 0 && steps.length < MAX_STEPS_PER_FLOW) {
     const item = queue.shift()!;
     if (visited.has(item.id) || item.depth > MAX_FLOW_DEPTH) continue;
     visited.add(item.id);
+    if (item.depth > maxDepth) maxDepth = item.depth;
 
     const node = queries.getNodeById(item.id);
     if (!node) continue;
@@ -106,7 +108,7 @@ export function computeCallChain(
     }
   }
 
-  return steps;
+  return { steps, maxDepth };
 }
 
 /**
@@ -125,15 +127,13 @@ export function computeAndStoreFlows(queries: QueryBuilder, db: SqliteDatabase):
   );
 
   for (const entry of entryPoints) {
-    const steps = computeCallChain(entry.id, queries);
+    const { steps, maxDepth } = computeCallChain(entry.id, queries);
     if (steps.length === 0) continue;
-
-    const depth = Math.max(0, steps.length - 1);
 
     insert.run(
       entry.id,
       JSON.stringify(steps),
-      depth,
+      maxDepth,
       steps.length,
       now,
     );

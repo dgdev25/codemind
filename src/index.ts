@@ -515,16 +515,16 @@ export class CodeMind {
             try {
               const { computeAndStoreFlows } = await import('./graph/execution-flows');
               computeAndStoreFlows(this.queries, this.db.getDb());
-            } catch {
-              // Non-fatal — flows are a precomputed cache
+            } catch (err) {
+              logWarn('execution-flows precompute failed (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
             }
 
             // Compute code communities via label propagation (non-fatal cache)
             try {
               const { computeAndStoreCommunities } = await import('./graph/communities');
               computeAndStoreCommunities(this.db.getDb());
-            } catch {
-              // Non-fatal
+            } catch (err) {
+              logWarn('community detection failed (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
             }
           }
 

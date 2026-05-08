@@ -1350,20 +1350,25 @@ export class ToolHandler {
    */
   private async handleDetectChanges(args: Record<string, unknown>): Promise<ToolResult> {
     const cg = this.getCodeMind(args.projectPath as string | undefined);
-    const base = (args.base as string) || 'HEAD';
+    const baseRaw = this.validateString(args.base ?? 'HEAD', 'base', 200);
+    if (typeof baseRaw !== 'string') return baseRaw;
+    const base = baseRaw;
     const includeImpact = args.includeImpact !== false;
     const projectRoot = cg.getProjectRoot();
 
-    // Get changed files via git diff
+    // Get changed files via git diff — use spawnSync with args array to avoid shell injection
     let changedFiles: string[];
     try {
-      const { execSync } = await import('child_process');
-      const output = execSync(`git diff --name-only ${base}`, {
+      const { spawnSync } = await import('child_process');
+      const result = spawnSync('git', ['diff', '--name-only', base], {
         cwd: projectRoot,
         encoding: 'utf8',
         timeout: 10000,
       });
-      changedFiles = output.split('\n').map(f => f.trim()).filter(Boolean);
+      if (result.error || result.status !== 0) {
+        return this.errorResult(`Could not run git diff against "${base}". Ensure this is a git repo and the ref exists.`);
+      }
+      changedFiles = (result.stdout as string).split('\n').map(f => f.trim()).filter(Boolean);
     } catch {
       return this.errorResult(`Could not run git diff against "${base}". Ensure this is a git repo and the ref exists.`);
     }
