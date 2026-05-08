@@ -4,7 +4,6 @@
 
 **A local knowledge graph that gives Claude Code instant structural understanding of any codebase.**
 
-[![npm version](https://img.shields.io/npm/v/@colbymchenry/codemind.svg)](https://www.npmjs.com/package/@colbymchenry/codemind)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![Windows](https://img.shields.io/badge/Windows-supported-blue.svg)](#)
@@ -12,10 +11,11 @@
 [![Linux](https://img.shields.io/badge/Linux-supported-blue.svg)](#)
 
 ```bash
-npx @colbymchenry/codemind
+git clone https://github.com/dgdev25/codemind.git
+cd codemind && npm install && npm run build && npm link
 ```
 
-<sub>Interactive installer — configures Claude Code automatically</sub>
+<sub>See <a href="#getting-started">Getting Started</a> for full setup</sub>
 
 ![CodeMind demo](https://github.com/user-attachments/assets/f168182f-4d9a-44e0-94d7-08d018cc8a3a)
 
@@ -117,17 +117,27 @@ Notable: the Alamofire benchmark traced a 9-step call chain from `Session.reques
 
 ## Getting Started
 
-**Step 1 — Run the installer:**
+**Step 1 — Clone and build:**
 
 ```bash
-npx @colbymchenry/codemind
+git clone https://github.com/dgdev25/codemind.git
+cd codemind
+npm install
+npm run build
+npm link          # makes the `codemind` command available globally
 ```
 
-This installs `codemind` globally, wires up the MCP server in `~/.claude.json`, configures tool permissions, and adds usage instructions to `~/.claude/CLAUDE.md`.
+**Step 2 — Run the installer:**
 
-**Step 2 — Restart Claude Code** so it picks up the new MCP server.
+```bash
+codemind install
+```
 
-**Step 3 — Initialize your project:**
+This wires up the MCP server in `~/.claude.json`, configures tool permissions, and adds usage instructions to `~/.claude/CLAUDE.md`.
+
+**Step 3 — Restart Claude Code** so it picks up the new MCP server.
+
+**Step 4 — Initialize your project:**
 
 ```bash
 cd your-project
@@ -137,12 +147,7 @@ codemind init -i
 The `-i` flag runs the full index immediately. From here, the MCP server auto-syncs as you edit files.
 
 <details>
-<summary>Manual setup without the installer</summary>
-
-**Install globally:**
-```bash
-npm install -g @colbymchenry/codemind
-```
+<summary>Manual MCP server setup</summary>
 
 **Register the MCP server in `~/.claude.json`:**
 ```json
@@ -312,7 +317,7 @@ Vector config in `.codemind/config.json`:
 ## Library API
 
 ```typescript
-import CodeMind from '@colbymchenry/codemind';
+import CodeMind from 'codemind';
 
 // Open an indexed project
 const cg = await CodeMind.open('/path/to/project');
@@ -404,8 +409,8 @@ MIT
 
 <div align="center">
 
-> Fork of [CodeGraph](https://github.com/colbymchenry/codegraph) by [@colbymchenry](https://github.com/colbymchenry) — extended with vector search, semantic embeddings, and the `codemind` CLI.
+> Fork of [CodeGraph](https://github.com/colbymchenry/codegraph) — extended with vector search, semantic embeddings, and the `codemind` CLI.
 
-[Issues](https://github.com/dgdev25/codemind/issues) · [npm](https://www.npmjs.com/package/@colbymchenry/codemind)
+[Issues](https://github.com/dgdev25/codemind/issues)
 
 </div>
