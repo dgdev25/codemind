@@ -174,19 +174,26 @@ export interface Logger {
 }
 
 /**
- * Default console-based logger
+ * Default console-based logger.
+ *
+ * Suppressed when CODEMIND_MCP=1 to prevent corrupting the JSON-RPC stdio
+ * transport used by the MCP server (which shares stderr with the protocol).
  */
 export const defaultLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
-    if (process.env.CODEMIND_DEBUG) {
+    if (process.env.CODEMIND_DEBUG && !process.env.CODEMIND_MCP) {
       console.debug(`[CodeMind] ${message}`, context ?? '');
     }
   },
   warn(message: string, context?: Record<string, unknown>): void {
-    console.warn(`[CodeMind] ${message}`, context ?? '');
+    if (!process.env.CODEMIND_MCP) {
+      console.warn(`[CodeMind] ${message}`, context ?? '');
+    }
   },
   error(message: string, context?: Record<string, unknown>): void {
-    console.error(`[CodeMind] ${message}`, context ?? '');
+    if (!process.env.CODEMIND_MCP) {
+      console.error(`[CodeMind] ${message}`, context ?? '');
+    }
   },
 };
 

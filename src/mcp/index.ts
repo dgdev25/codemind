@@ -79,6 +79,10 @@ export class MCPServer {
    * is received, which includes the rootUri from the client.
    */
   async start(): Promise<void> {
+    // Mark process as MCP mode so defaultLogger suppresses console output —
+    // stdout/stderr are shared with the JSON-RPC transport and must stay clean.
+    process.env.CODEMIND_MCP = '1';
+
     // Start listening for messages immediately - don't check initialization yet
     // We'll get the project path from the initialize request's rootUri
     this.transport.start(this.handleMessage.bind(this));

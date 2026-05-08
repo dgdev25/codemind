@@ -53,6 +53,7 @@ import { ContextBuilder, createContextBuilder } from './context';
 import { Mutex, FileLock } from './utils';
 import { FileWatcher, WatchOptions } from './sync';
 import { VectorIndex, Embedder, buildEmbeddingDocument, contentHash } from './vector';
+import { logWarn } from './errors';
 
 // Re-export types for consumers
 export * from './types';
@@ -80,6 +81,7 @@ export {
   getLogger,
   silentLogger,
   defaultLogger,
+  logWarn,
 } from './errors';
 export { Mutex, FileLock, processInBatches, debounce, throttle, MemoryMonitor } from './utils';
 export { FileWatcher, WatchOptions } from './sync';
@@ -473,100 +475,12 @@ export class CodeMind {
   async indexAll(options: IndexOptions = {}): Promise<IndexResult> {
     return this.indexMutex.withLock(async () => {
       try {
-        this.fileLock.acquire();
-      } catch {
-        return { success: false, filesIndexed: 0, filesSkipped: 0, filesErrored: 0, nodesCreated: 0, edgesCreated: 0, errors: [{ message: 'Could not acquire file lock - another process may be indexing', severity: 'error' as const }], durationMs: 0 };
-      }
-      try {
-        const result = await this.orchestrator.indexAll(options.onProgress, options.signal, options.verbose);
+        return await this.fileLock.withLockAsync(async () => {
+          const result = await this.orchestrator.indexAll(options.onProgress, options.signal, options.verbose);
 
-        // Resolve references to create call/import/extends edges
-        if (result.success && result.filesIndexed > 0) {
-          // Get count without loading all refs into memory
-          const unresolvedCount = this.queries.getUnresolvedReferencesCount();
-
-          options.onProgress?.({
-            phase: 'resolving',
-            current: 0,
-            total: unresolvedCount,
-          });
-
-          await this.resolveReferencesBatched((current, total) => {
-            options.onProgress?.({
-              phase: 'resolving',
-              current,
-              total,
-            });
-          });
-        }
-
-        if (result.success && this.config.vector?.indexOnSync) {
-          await this.syncVectorIncremental();
-        }
-
-        return result;
-      } finally {
-        this.fileLock.release();
-      }
-    });
-  }
-
-  /**
-   * Index specific files
-   *
-   * Uses a mutex to prevent concurrent indexing operations.
-   */
-  async indexFiles(filePaths: string[]): Promise<IndexResult> {
-    return this.indexMutex.withLock(async () => {
-      try {
-        this.fileLock.acquire();
-      } catch {
-        return { success: false, filesIndexed: 0, filesSkipped: 0, filesErrored: 0, nodesCreated: 0, edgesCreated: 0, errors: [{ message: 'Could not acquire file lock - another process may be indexing', severity: 'error' as const }], durationMs: 0 };
-      }
-      try {
-        return this.orchestrator.indexFiles(filePaths);
-      } finally {
-        this.fileLock.release();
-      }
-    });
-  }
-
-  /**
-   * Sync with current file state (incremental update)
-   *
-   * Uses a mutex to prevent concurrent indexing operations.
-   */
-  async sync(options: IndexOptions = {}): Promise<SyncResult> {
-    return this.indexMutex.withLock(async () => {
-      try {
-        this.fileLock.acquire();
-      } catch {
-        return { filesChecked: 0, filesAdded: 0, filesModified: 0, filesRemoved: 0, nodesUpdated: 0, durationMs: 0 };
-      }
-      try {
-        const result = await this.orchestrator.sync(options.onProgress);
-
-        // Resolve references if files were updated
-        if (result.filesAdded > 0 || result.filesModified > 0) {
-          if (result.changedFilePaths) {
-            // Scope resolution to changed files (git fast path — bounded set)
-            const unresolvedRefs = this.queries.getUnresolvedReferencesByFiles(result.changedFilePaths);
-
-            options.onProgress?.({
-              phase: 'resolving',
-              current: 0,
-              total: unresolvedRefs.length,
-            });
-
-            this.resolver.resolveAndPersist(unresolvedRefs, (current, total) => {
-              options.onProgress?.({
-                phase: 'resolving',
-                current,
-                total,
-              });
-            });
-          } else {
-            // No git info — use batched resolution to avoid OOM
+          // Resolve references to create call/import/extends edges
+          if (result.success && result.filesIndexed > 0) {
+            // Get count without loading all refs into memory
             const unresolvedCount = this.queries.getUnresolvedReferencesCount();
 
             options.onProgress?.({
@@ -583,15 +497,103 @@ export class CodeMind {
               });
             });
           }
-        }
 
-        if (this.vectorIndex && (result.filesAdded > 0 || result.filesModified > 0)) {
-          this.syncVectorIncremental().catch(() => { /* vector sync failures are non-fatal */ });
-        }
+          if (result.success && this.config.vector?.indexOnSync) {
+            await this.syncVectorIncremental();
+          }
 
-        return result;
-      } finally {
-        this.fileLock.release();
+          return result;
+        });
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('locked by another')) {
+          return { success: false, filesIndexed: 0, filesSkipped: 0, filesErrored: 0, nodesCreated: 0, edgesCreated: 0, errors: [{ message: 'Could not acquire file lock - another process may be indexing', severity: 'error' as const }], durationMs: 0 };
+        }
+        throw err;
+      }
+    });
+  }
+
+  /**
+   * Index specific files
+   *
+   * Uses a mutex to prevent concurrent indexing operations.
+   */
+  async indexFiles(filePaths: string[]): Promise<IndexResult> {
+    return this.indexMutex.withLock(async () => {
+      try {
+        return await this.fileLock.withLockAsync(() => this.orchestrator.indexFiles(filePaths));
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('locked by another')) {
+          return { success: false, filesIndexed: 0, filesSkipped: 0, filesErrored: 0, nodesCreated: 0, edgesCreated: 0, errors: [{ message: 'Could not acquire file lock - another process may be indexing', severity: 'error' as const }], durationMs: 0 };
+        }
+        throw err;
+      }
+    });
+  }
+
+  /**
+   * Sync with current file state (incremental update)
+   *
+   * Uses a mutex to prevent concurrent indexing operations.
+   */
+  async sync(options: IndexOptions = {}): Promise<SyncResult> {
+    return this.indexMutex.withLock(async () => {
+      try {
+        return await this.fileLock.withLockAsync(async () => {
+          const result = await this.orchestrator.sync(options.onProgress);
+
+          // Resolve references if files were updated
+          if (result.filesAdded > 0 || result.filesModified > 0) {
+            if (result.changedFilePaths) {
+              // Scope resolution to changed files (git fast path — bounded set)
+              const unresolvedRefs = this.queries.getUnresolvedReferencesByFiles(result.changedFilePaths);
+
+              options.onProgress?.({
+                phase: 'resolving',
+                current: 0,
+                total: unresolvedRefs.length,
+              });
+
+              this.resolver.resolveAndPersist(unresolvedRefs, (current, total) => {
+                options.onProgress?.({
+                  phase: 'resolving',
+                  current,
+                  total,
+                });
+              });
+            } else {
+              // No git info — use batched resolution to avoid OOM
+              const unresolvedCount = this.queries.getUnresolvedReferencesCount();
+
+              options.onProgress?.({
+                phase: 'resolving',
+                current: 0,
+                total: unresolvedCount,
+              });
+
+              await this.resolveReferencesBatched((current, total) => {
+                options.onProgress?.({
+                  phase: 'resolving',
+                  current,
+                  total,
+                });
+              });
+            }
+          }
+
+          if (this.vectorIndex && (result.filesAdded > 0 || result.filesModified > 0)) {
+            this.syncVectorIncremental().catch((err: unknown) => {
+              logWarn('Vector sync failed during watch', { error: err instanceof Error ? err.message : String(err) });
+            });
+          }
+
+          return result;
+        });
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('locked by another')) {
+          return { filesChecked: 0, filesAdded: 0, filesModified: 0, filesRemoved: 0, nodesUpdated: 0, durationMs: 0 };
+        }
+        throw err;
       }
     });
   }

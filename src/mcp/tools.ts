@@ -8,7 +8,7 @@ import CodeMind, { findNearestCodeMindRoot } from '../index';
 import type { Node, Edge, SearchResult, Subgraph, TaskContext, NodeKind } from '../types';
 import { createHash } from 'crypto';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
-import { clamp, validatePathWithinRoot } from '../utils';
+import { clamp, validatePathWithinRoot, validateProjectPath } from '../utils';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -348,8 +348,10 @@ export const tools: ToolDefinition[] = [
  * Other projects are opened on-demand and cached for performance.
  */
 export class ToolHandler {
-  // Cache of opened CodeMind instances for cross-project queries
+  // Cache of opened CodeMind instances for cross-project queries.
+  // Bounded to prevent unbounded memory growth in long-running MCP sessions.
   private projectCache: Map<string, CodeMind> = new Map();
+  private static readonly MAX_PROJECT_CACHE = 16;
 
   constructor(private cg: CodeMind | null) {}
 
@@ -410,6 +412,12 @@ export class ToolHandler {
       return this.cg;
     }
 
+    // Reject sensitive system directories before doing any filesystem work
+    const pathError = validateProjectPath(projectPath);
+    if (pathError) {
+      throw new Error(pathError);
+    }
+
     // Check cache first (using original path as key)
     if (this.projectCache.has(projectPath)) {
       return this.projectCache.get(projectPath)!;
@@ -428,6 +436,16 @@ export class ToolHandler {
       // Cache under original path too for faster future lookups
       this.projectCache.set(projectPath, cg);
       return cg;
+    }
+
+    // Evict oldest entry if cache is full (LRU-lite: evict insertion-order first)
+    if (this.projectCache.size >= ToolHandler.MAX_PROJECT_CACHE) {
+      const oldest = this.projectCache.keys().next().value;
+      if (oldest !== undefined) {
+        const old = this.projectCache.get(oldest);
+        this.projectCache.delete(oldest);
+        old?.close();
+      }
     }
 
     // Open and cache under both paths
