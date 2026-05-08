@@ -1,6 +1,8 @@
 <div align="center">
 
-# CodeGraph
+> **Fork notice:** CodeMind is a fork of [CodeGraph](https://github.com/colbymchenry/codegraph) by [@colbymchenry](https://github.com/colbymchenry), extended with vector search, semantic embeddings via `@ruvector/core`, and a renamed CLI (`codemind`).
+
+# CodeMind
 
 ### Supercharge Claude Code with Semantic Code Intelligence
 
