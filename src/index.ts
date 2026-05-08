@@ -463,6 +463,14 @@ export class CodeMind {
     return this.queries;
   }
 
+  /**
+   * Expose the raw SQLite database handle for advanced consumers
+   * that need direct query access (e.g., skill generation).
+   */
+  getDatabaseHandle(): ReturnType<typeof this.db.getDb> {
+    return this.db.getDb();
+  }
+
   // ===========================================================================
   // Indexing
   // ===========================================================================

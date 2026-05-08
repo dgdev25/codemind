@@ -1360,6 +1360,54 @@ hooksCmd
   });
 
 /**
+ * codemind skills generate
+ */
+const skillsCmd = program
+  .command('skills')
+  .description('Skill file management');
+
+skillsCmd
+  .command('generate')
+  .description('Generate per-community skill files in .claude/skills/codemind/')
+  .option('-p, --path <path>', 'Project path')
+  .option('-o, --output <dir>', 'Output directory (default: .claude/skills/codemind/)')
+  .option('-q, --quiet', 'Suppress output')
+  .action(async (options: { path?: string; output?: string; quiet?: boolean }) => {
+    const projectPath = resolveProjectPath(options.path);
+    try {
+      if (!isInitialized(projectPath)) {
+        error(`CodeMind not initialized in ${projectPath}`);
+        process.exit(1);
+      }
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = CodeMind.openSync(projectPath);
+      const { generateSkillFiles } = await import('../graph/skill-generator');
+      const result = generateSkillFiles(
+        cg.getDatabaseHandle(),
+        projectPath,
+        options.output,
+      );
+      cg.close();
+      if (!options.quiet) {
+        if (result.generated.length === 0) {
+          info('No communities with enough members. Run `codemind index` first.');
+        } else {
+          success(`Generated ${result.generated.length} skill file(s):`);
+          for (const f of result.generated) {
+            console.log('  ' + f);
+          }
+          if (result.skipped > 0) {
+            info(`Skipped ${result.skipped} communities (fewer than 5 members).`);
+          }
+        }
+      }
+    } catch (err) {
+      error(`Skills generation failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+/**
  * codemind install
  */
 program

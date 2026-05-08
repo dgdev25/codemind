@@ -377,6 +377,26 @@ export const tools: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: 'codemind_detect_changes',
+    description: 'Map a git diff to affected symbols in the graph. Shows which symbols changed and their immediate impact. Useful for pre-commit review and understanding the blast radius of a branch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        base: {
+          type: 'string',
+          description: 'Git ref to diff against (default: "HEAD"). Use "main" for branch comparisons.',
+          default: 'HEAD',
+        },
+        includeImpact: {
+          type: 'boolean',
+          description: 'Also show immediate callers/dependents of changed symbols (default: true)',
+          default: true,
+        },
+        projectPath: projectPathProperty,
+      },
+    },
+  },
 ];
 
 /**
@@ -552,6 +572,8 @@ export class ToolHandler {
           return await this.handleFlows(args);
         case 'codemind_clusters':
           return await this.handleClusters(args);
+        case 'codemind_detect_changes':
+          return await this.handleDetectChanges(args);
         default:
           return this.errorResult(`Unknown tool: ${toolName}`);
       }
@@ -801,7 +823,8 @@ export class ToolHandler {
       roots: allMatches.nodes.map(n => n.id),
     };
 
-    const formatted = this.formatImpact(symbol, mergedImpact) + allMatches.note;
+    const depths = this.computeImpactDepths(mergedImpact.roots, mergedImpact);
+    const formatted = this.formatImpactWithDepths(symbol, mergedImpact, depths) + allMatches.note;
     return this.textResult(this.truncateOutput(formatted));
   }
 
@@ -1323,6 +1346,93 @@ export class ToolHandler {
   }
 
   /**
+   * Handle codemind_detect_changes
+   */
+  private async handleDetectChanges(args: Record<string, unknown>): Promise<ToolResult> {
+    const cg = this.getCodeMind(args.projectPath as string | undefined);
+    const base = (args.base as string) || 'HEAD';
+    const includeImpact = args.includeImpact !== false;
+    const projectRoot = cg.getProjectRoot();
+
+    // Get changed files via git diff
+    let changedFiles: string[];
+    try {
+      const { execSync } = await import('child_process');
+      const output = execSync(`git diff --name-only ${base}`, {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+      changedFiles = output.split('\n').map(f => f.trim()).filter(Boolean);
+    } catch {
+      return this.errorResult(`Could not run git diff against "${base}". Ensure this is a git repo and the ref exists.`);
+    }
+
+    if (changedFiles.length === 0) {
+      return this.textResult(`No changed files detected against "${base}".`);
+    }
+
+    const lines: string[] = [
+      `## Changed Symbols (vs ${base})`,
+      '',
+      `${changedFiles.length} file(s) changed.`,
+      '',
+    ];
+
+    let totalSymbols = 0;
+    const impactedByChange = new Map<string, Array<{ name: string; kind: string; file: string; line: number }>>();
+
+    for (const file of changedFiles.slice(0, 30)) {
+      // Find symbols in this file
+      const fileSymbols = cg.getNodesInFile(file);
+      if (fileSymbols.length === 0) continue;
+
+      totalSymbols += fileSymbols.length;
+      lines.push(`**${file}** (${fileSymbols.length} symbols changed):`);
+
+      for (const node of fileSymbols.slice(0, 10)) {
+        lines.push(`- ${node.name} (${node.kind}):${node.startLine}`);
+
+        if (includeImpact) {
+          // Get direct callers (depth 1 only for conciseness)
+          const callers = cg.getCallers(node.id);
+          for (const c of callers.slice(0, 5)) {
+            const existing = impactedByChange.get(c.node.filePath) ?? [];
+            if (!existing.find(e => e.name === c.node.name)) {
+              existing.push({ name: c.node.name, kind: c.node.kind, file: c.node.filePath, line: c.node.startLine });
+              impactedByChange.set(c.node.filePath, existing);
+            }
+          }
+        }
+      }
+
+      if (fileSymbols.length > 10) lines.push(`  ... and ${fileSymbols.length - 10} more symbols`);
+      lines.push('');
+    }
+
+    if (changedFiles.length > 30) {
+      lines.push(`... and ${changedFiles.length - 30} more changed files`);
+      lines.push('');
+    }
+
+    // Suppress unused variable warning — totalSymbols is a side-effect counter
+    void totalSymbols;
+
+    if (includeImpact && impactedByChange.size > 0) {
+      lines.push('## Immediately Impacted (direct callers)');
+      lines.push('');
+      for (const [file, symbols] of impactedByChange) {
+        const syms = symbols.map(s => `${s.name}:${s.line}`).join(', ');
+        lines.push(`**${file}:** ${syms}`);
+      }
+      lines.push('');
+      lines.push('> These symbols directly call changed code. Run `codemind_impact` on specific symbols for deeper blast radius.');
+    }
+
+    return this.textResult(this.truncateOutput(lines.join('\n')));
+  }
+
+  /**
    * Handle codemind_clusters
    */
   private async handleClusters(args: Record<string, unknown>): Promise<ToolResult> {
@@ -1617,32 +1727,102 @@ export class ToolHandler {
     return lines.join('\n');
   }
 
-  private formatImpact(symbol: string, impact: Subgraph): string {
-    const nodeCount = impact.nodes.size;
+  /**
+   * BFS over impact edges from root IDs to compute minimum depth for each node.
+   * Depth 0 = root (the changed symbol itself), depth 1 = direct callers, etc.
+   */
+  private computeImpactDepths(rootIds: string[], impact: Subgraph): Map<string, number> {
+    const depths = new Map<string, number>();
+    for (const id of rootIds) depths.set(id, 0);
 
-    // Compact format: just list affected symbols grouped by file
+    const queue: Array<{ id: string; depth: number }> = rootIds.map(id => ({ id, depth: 0 }));
+    while (queue.length > 0) {
+      const item = queue.shift()!;
+      const { id, depth } = item;
+      for (const edge of impact.edges) {
+        const nextId = edge.source === id ? edge.target : (edge.target === id ? edge.source : null);
+        if (nextId && !depths.has(nextId)) {
+          depths.set(nextId, depth + 1);
+          queue.push({ id: nextId, depth: depth + 1 });
+        }
+      }
+    }
+    return depths;
+  }
+
+  /**
+   * Format impact analysis output grouped by confidence tier based on graph distance.
+   * Tier 1 (depth=1): direct callers — will likely break immediately.
+   * Tier 2 (depth=2): second-degree dependents — likely affected.
+   * Tier 3+ (depth>=3): transitive dependents — may be affected.
+   */
+  private formatImpactWithDepths(symbol: string, impact: Subgraph, depths: Map<string, number>): string {
     const lines: string[] = [
-      `## Impact: "${symbol}" affects ${nodeCount} symbols`,
+      `## Impact: "${symbol}" — ${impact.nodes.size} symbols affected`,
       '',
     ];
 
-    // Group by file
-    const byFile = new Map<string, Node[]>();
+    const tier1: Node[] = [];
+    const tier2: Node[] = [];
+    const tier3plus: Node[] = [];
+
     for (const node of impact.nodes.values()) {
-      const existing = byFile.get(node.filePath) || [];
-      existing.push(node);
-      byFile.set(node.filePath, existing);
+      // Skip root nodes (the changed symbols themselves)
+      if (impact.roots.includes(node.id)) continue;
+      const depth = depths.get(node.id) ?? 99;
+      if (depth === 1) tier1.push(node);
+      else if (depth === 2) tier2.push(node);
+      else tier3plus.push(node);
     }
 
-    for (const [file, nodes] of byFile) {
-      lines.push(`**${file}:**`);
-      // Compact: inline list
-      const nodeList = nodes.map(n => `${n.name}:${n.startLine}`).join(', ');
-      lines.push(nodeList);
+    if (tier1.length > 0) {
+      lines.push('### Direct callers (will break)');
+      lines.push('');
+      const byFile = this.groupNodesByFile(tier1);
+      for (const [file, nodes] of byFile) {
+        lines.push(`**${file}:** ${nodes.map(n => `${n.name}:${n.startLine}`).join(', ')}`);
+      }
       lines.push('');
     }
 
+    if (tier2.length > 0) {
+      lines.push('### Depth-2 dependents (likely affected)');
+      lines.push('');
+      const byFile = this.groupNodesByFile(tier2);
+      for (const [file, nodes] of byFile) {
+        lines.push(`**${file}:** ${nodes.map(n => `${n.name}:${n.startLine}`).join(', ')}`);
+      }
+      lines.push('');
+    }
+
+    if (tier3plus.length > 0) {
+      lines.push(`### Depth 3+ (may be affected — ${tier3plus.length} symbols)`);
+      const byFile = this.groupNodesByFile(tier3plus.slice(0, 20));
+      for (const [file, nodes] of byFile) {
+        lines.push(`**${file}:** ${nodes.map(n => `${n.name}:${n.startLine}`).join(', ')}`);
+      }
+      if (tier3plus.length > 20) lines.push(`... and ${tier3plus.length - 20} more`);
+      lines.push('');
+    }
+
+    if (tier1.length === 0 && tier2.length === 0 && tier3plus.length === 0) {
+      lines.push('No dependents found — this symbol is not called by anything in the index.');
+    }
+
     return lines.join('\n');
+  }
+
+  /**
+   * Group an array of nodes by their file path.
+   */
+  private groupNodesByFile(nodes: Node[]): Map<string, Node[]> {
+    const byFile = new Map<string, Node[]>();
+    for (const node of nodes) {
+      const existing = byFile.get(node.filePath) ?? [];
+      existing.push(node);
+      byFile.set(node.filePath, existing);
+    }
+    return byFile;
   }
 
   private formatNodeDetails(node: Node, code: string | null): string {

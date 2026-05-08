@@ -188,6 +188,40 @@ export class MCPServer {
   }
 
   /**
+   * Handle prompts/list request
+   */
+  private async handlePromptsList(request: JsonRpcRequest): Promise<void> {
+    const { prompts } = await import('./prompts');
+    this.transport.sendResult(request.id, { prompts });
+  }
+
+  /**
+   * Handle prompts/get request
+   */
+  private async handlePromptsGet(request: JsonRpcRequest): Promise<void> {
+    const params = request.params as { name: string; arguments?: Record<string, string> } | undefined;
+    if (!params?.name) {
+      this.transport.sendError(request.id, ErrorCodes.InvalidParams, 'Missing prompt name');
+      return;
+    }
+    const { getPromptMessages, prompts } = await import('./prompts');
+    const promptDef = prompts.find(p => p.name === params.name);
+    if (!promptDef) {
+      this.transport.sendError(request.id, ErrorCodes.InvalidParams, `Unknown prompt: ${params.name}`);
+      return;
+    }
+    const messages = getPromptMessages(params.name, params.arguments ?? {});
+    if (!messages) {
+      this.transport.sendError(request.id, ErrorCodes.InternalError, `Failed to generate prompt: ${params.name}`);
+      return;
+    }
+    this.transport.sendResult(request.id, {
+      description: promptDef.description,
+      messages,
+    });
+  }
+
+  /**
    * Stop the server
    */
   stop(): void {
@@ -230,6 +264,18 @@ export class MCPServer {
       case 'tools/call':
         if (isRequest) {
           await this.handleToolsCall(message as JsonRpcRequest);
+        }
+        break;
+
+      case 'prompts/list':
+        if (isRequest) {
+          await this.handlePromptsList(message as JsonRpcRequest);
+        }
+        break;
+
+      case 'prompts/get':
+        if (isRequest) {
+          await this.handlePromptsGet(message as JsonRpcRequest);
         }
         break;
 
@@ -284,6 +330,7 @@ export class MCPServer {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {
         tools: {},
+        prompts: {},
       },
       serverInfo: SERVER_INFO,
       instructions: SERVER_INSTRUCTIONS,
