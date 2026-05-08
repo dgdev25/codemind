@@ -179,6 +179,10 @@ export class CodeMind {
   // Vector initialization (internal)
   // ===========================================================================
 
+  async initVectorIfEnabled(): Promise<void> {
+    return this.initVector();
+  }
+
   private async initVector(): Promise<void> {
     if (!this.config.vector?.enabled) return;
     const vcfg = this.config.vector;

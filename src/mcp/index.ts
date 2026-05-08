@@ -150,6 +150,9 @@ export class MCPServer {
       this.projectPath = resolvedRoot;
       this.toolHandler.setDefaultCodeMind(this.cg);
       this.startWatching();
+      // initVector is async (loads ESM); fire-and-forget so vector search
+      // becomes available shortly after the sync retry completes.
+      this.cg.initVectorIfEnabled().catch(() => { /* non-fatal */ });
     } catch {
       // Still failing — will retry on next tool call
     }
