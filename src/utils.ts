@@ -187,7 +187,7 @@ export class FileLock {
   private held = false;
 
   /** Locks older than this are considered stale regardless of PID status */
-  private static readonly STALE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+  private static readonly STALE_TIMEOUT_MS = 30 * 1000; // 30 seconds — short enough to handle PID reuse
 
   constructor(lockPath: string) {
     this.lockPath = lockPath;
@@ -201,11 +201,15 @@ export class FileLock {
     if (fs.existsSync(this.lockPath)) {
       try {
         const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
-        const pid = parseInt(content, 10);
+        // Lock format: "codemind:<pid>" — the prefix lets us reject locks written
+        // by other processes that happen to have reused the PID.
+        const match = /^codemind:(\d+)$/.exec(content);
+        const pid = match ? parseInt(match[1]!, 10) : NaN;
         const stat = fs.statSync(this.lockPath);
         const lockAge = Date.now() - stat.mtimeMs;
 
-        // Treat locks older than the timeout as stale, regardless of PID
+        // Treat locks older than the timeout as stale, regardless of PID.
+        // Short timeout (30s) limits the window for PID-reuse false positives.
         if (lockAge < FileLock.STALE_TIMEOUT_MS && !isNaN(pid) && this.isProcessAlive(pid)) {
           throw new Error(
             `CodeMind database is locked by another process (PID ${pid}). ` +
@@ -224,9 +228,9 @@ export class FileLock {
       }
     }
 
-    // Write our PID to the lock file using exclusive create flag
+    // Write our PID with codemind prefix to the lock file using exclusive create flag
     try {
-      fs.writeFileSync(this.lockPath, String(process.pid), { flag: 'wx' });
+      fs.writeFileSync(this.lockPath, `codemind:${process.pid}`, { flag: 'wx' });
       this.held = true;
     } catch (err: any) {
       if (err.code === 'EEXIST') {
@@ -246,9 +250,9 @@ export class FileLock {
   release(): void {
     if (!this.held) return;
     try {
-      // Only remove if we still own it (check PID)
+      // Only remove if we still own it (match full codemind:<pid> marker)
       const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
-      if (parseInt(content, 10) === process.pid) {
+      if (content === `codemind:${process.pid}`) {
         fs.unlinkSync(this.lockPath);
       }
     } catch {

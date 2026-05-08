@@ -180,6 +180,8 @@ export class QueryBuilder {
     getUnresolvedBatch?: SqliteStatement;
     getAllFilePaths?: SqliteStatement;
     getAllNodeNames?: SqliteStatement;
+    getAllNodes?: SqliteStatement;
+    getNodesForVectorSync?: SqliteStatement;
   } = {};
 
   constructor(db: SqliteDatabase) {
@@ -444,7 +446,10 @@ export class QueryBuilder {
    * Get all nodes in the database, up to the specified limit.
    */
   getAllNodes(limit = 100_000): Node[] {
-    const rows = this.db.prepare('SELECT * FROM nodes LIMIT ?').all(limit) as NodeRow[];
+    if (!this.stmts.getAllNodes) {
+      this.stmts.getAllNodes = this.db.prepare('SELECT * FROM nodes LIMIT ?');
+    }
+    const rows = this.stmts.getAllNodes.all(limit) as NodeRow[];
     return rows.map(rowToNode);
   }
 
@@ -1470,16 +1475,19 @@ export class QueryBuilder {
    * since their last embedding (detected via updated_at vs embedded_at).
    */
   getNodesForVectorSync(limit = 50_000): Node[] {
-    const rows = this.db.prepare(`
-      SELECT n.*
-      FROM nodes n
-      LEFT JOIN vector_sync vs ON vs.node_id = n.id
-      WHERE vs.node_id IS NULL
-         OR n.updated_at > vs.embedded_at
-         OR vs.content_hash IS NULL
-      ORDER BY n.updated_at DESC
-      LIMIT ?
-    `).all(limit) as NodeRow[];
+    if (!this.stmts.getNodesForVectorSync) {
+      this.stmts.getNodesForVectorSync = this.db.prepare(`
+        SELECT n.*
+        FROM nodes n
+        LEFT JOIN vector_sync vs ON vs.node_id = n.id
+        WHERE vs.node_id IS NULL
+           OR n.updated_at > vs.embedded_at
+           OR vs.content_hash IS NULL
+        ORDER BY n.updated_at DESC
+        LIMIT ?
+      `);
+    }
+    const rows = this.stmts.getNodesForVectorSync.all(limit) as NodeRow[];
     return rows.map(rowToNode);
   }
 

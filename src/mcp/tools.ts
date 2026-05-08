@@ -7,7 +7,7 @@
 import CodeMind, { findNearestCodeMindRoot } from '../index';
 import type { Node, Edge, SearchResult, Subgraph, TaskContext, NodeKind } from '../types';
 import { createHash } from 'crypto';
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { clamp, validatePathWithinRoot } from '../utils';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -32,17 +32,32 @@ export function getExploreBudget(fileCount: number): number {
  * Mark a Claude session as having consulted MCP tools.
  * This enables Grep/Glob/Bash commands that would otherwise be blocked.
  */
+const SESSION_MARKER_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 function markSessionConsulted(sessionId: string): void {
   try {
     const hash = createHash('sha256').update(sessionId).digest('hex').slice(0, 16);
-    // Use a private subdirectory so the marker name is not guessable from the hash alone
     const markerDir = join(tmpdir(), 'codemind-sessions');
     mkdirSync(markerDir, { recursive: true, mode: 0o700 });
     const markerPath = join(markerDir, hash);
     writeFileSync(markerPath, new Date().toISOString(), { encoding: 'utf8', mode: 0o600 });
+    // Best-effort cleanup of markers older than TTL to prevent unbounded accumulation
+    pruneStaleMarkers(markerDir);
   } catch {
     // Silently fail - don't break MCP on marker write failure
   }
+}
+
+function pruneStaleMarkers(markerDir: string): void {
+  try {
+    const cutoff = Date.now() - SESSION_MARKER_TTL_MS;
+    for (const entry of readdirSync(markerDir)) {
+      try {
+        const p = join(markerDir, entry);
+        if (statSync(p).mtimeMs < cutoff) unlinkSync(p);
+      } catch { /* skip unreadable entries */ }
+    }
+  } catch { /* ignore if dir read fails */ }
 }
 
 /**
