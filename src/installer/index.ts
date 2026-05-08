@@ -4,15 +4,16 @@
  * Uses @clack/prompts for a polished interactive CLI experience.
  */
 
-import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import {
-  writeMcpConfig, writePermissions, writeClaudeMd,
+  writeMcpConfig, writeCursorMcpConfig, writeWindsurfMcpConfig,
+  writePermissions, writeClaudeMd,
   hasMcpConfig, hasPermissions,
 } from './config-writer';
+import { installPostEditHook } from './hooks';
 
-import type { InstallLocation } from './config-writer';
+import type { InstallLocation, SupportedEditor } from './config-writer';
 
 // Dynamic import helper — tsc compiles import() to require() in CJS mode,
 // which fails for ESM-only packages. Specifier is validated against an allowlist.
@@ -53,29 +54,27 @@ export async function runInstaller(): Promise<void> {
 
   clack.intro(`CodeMind v${getVersion()}`);
 
-  // Step 1: Install globally
-  const shouldInstallGlobally = await clack.confirm({
-    message: 'Install codemind globally? (Required for MCP server)',
-    initialValue: true,
+  // Step 1: Select which editors to configure
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const multiselectFn = (clack as any).multiselect as (opts: {
+    message: string;
+    options: Array<{ value: string; label: string; hint?: string; selected?: boolean }>;
+    required?: boolean;
+  }) => Promise<string[] | symbol>;
+
+  const editors = await multiselectFn({
+    message: 'Which editors would you like to configure CodeMind for?',
+    options: [
+      { value: 'claude', label: 'Claude Code', hint: '~/.claude.json', selected: true },
+      { value: 'cursor', label: 'Cursor', hint: '~/.cursor/mcp.json' },
+      { value: 'windsurf', label: 'Windsurf', hint: '~/.codeium/windsurf/mcp_config.json' },
+    ],
+    required: true,
   });
 
-  if (clack.isCancel(shouldInstallGlobally)) {
+  if (clack.isCancel(editors)) {
     clack.cancel('Installation cancelled.');
     process.exit(0);
-  }
-
-  if (shouldInstallGlobally) {
-    const s = clack.spinner();
-    s.start('Installing codemind globally...');
-    try {
-      execSync('npm install -g @colbymchenry/codemind', { stdio: 'pipe' });
-      s.stop('Installed codemind globally');
-    } catch {
-      s.stop('Could not install globally (permission denied)');
-      clack.log.warn('Try: sudo npm install -g @colbymchenry/codemind');
-    }
-  } else {
-    clack.log.info('Skipped global install — MCP server may not work without it');
   }
 
   // Step 2: Installation location
@@ -105,7 +104,7 @@ export async function runInstaller(): Promise<void> {
   }
 
   // Step 4: Write configuration files
-  writeConfigs(clack, location, autoAllow);
+  writeConfigs(clack, location, autoAllow, editors as SupportedEditor[]);
 
   // Step 5: For local install, initialize the project
   if (location === 'local') {
@@ -120,7 +119,13 @@ export async function runInstaller(): Promise<void> {
     );
   }
 
-  clack.outro('Done! Restart Claude Code to use CodeMind.');
+  const selectedEditors = editors as SupportedEditor[];
+  const restartLines: string[] = [];
+  if (selectedEditors.includes('claude')) restartLines.push('Restart Claude Code to activate CodeMind');
+  if (selectedEditors.includes('cursor')) restartLines.push('Restart Cursor to activate CodeMind');
+  if (selectedEditors.includes('windsurf')) restartLines.push('Restart Windsurf to activate CodeMind');
+
+  clack.outro(restartLines.join('\n') || 'Done!');
 }
 
 /**
@@ -130,30 +135,53 @@ function writeConfigs(
   clack: typeof import('@clack/prompts'),
   location: InstallLocation,
   autoAllow: boolean,
+  editors: SupportedEditor[],
 ): void {
   const locationLabel = location === 'global' ? '~/.claude' : './.claude';
 
-  // MCP config
-  const mcpAction = hasMcpConfig(location) ? 'Updated' : 'Added';
-  writeMcpConfig(location);
-  clack.log.success(`${mcpAction} MCP server in ${locationLabel}.json`);
+  // MCP config for Claude Code
+  if (editors.includes('claude')) {
+    const mcpAction = hasMcpConfig(location) ? 'Updated' : 'Added';
+    writeMcpConfig(location);
+    clack.log.success(`${mcpAction} MCP server in ${locationLabel}.json`);
 
-  // Permissions
-  if (autoAllow) {
+    // PostEdit auto-sync hook
+    const hookResult = installPostEditHook(location as 'global' | 'local');
+    if (hookResult.created) {
+      clack.log.success('Added PostEdit auto-sync hook (graph updates after file edits)');
+    }
+  }
+
+  // MCP config for Cursor
+  if (editors.includes('cursor')) {
+    writeCursorMcpConfig();
+    clack.log.success('Added MCP server in ~/.cursor/mcp.json');
+  }
+
+  // MCP config for Windsurf
+  if (editors.includes('windsurf')) {
+    writeWindsurfMcpConfig();
+    clack.log.success('Added MCP server in ~/.codeium/windsurf/mcp_config.json');
+  }
+
+  // Permissions (Claude Code only)
+  if (editors.includes('claude') && autoAllow) {
     const permAction = hasPermissions(location) ? 'Updated' : 'Added';
     writePermissions(location);
     clack.log.success(`${permAction} permissions in ${locationLabel}/settings.json`);
   }
 
-  // CLAUDE.md
-  const claudeMdResult = writeClaudeMd(location);
-  const claudeMdPath = `${locationLabel}/CLAUDE.md`;
-  if (claudeMdResult.created) {
-    clack.log.success(`Created ${claudeMdPath}`);
-  } else if (claudeMdResult.updated) {
-    clack.log.success(`Updated ${claudeMdPath}`);
-  } else {
-    clack.log.success(`Added CodeMind instructions to ${claudeMdPath}`);
+  // CLAUDE.md (Claude Code only)
+  if (editors.includes('claude')) {
+    const claudeMdResult = writeClaudeMd(location);
+    const claudeMdPath = `${locationLabel}/CLAUDE.md`;
+    if (claudeMdResult.created) {
+      clack.log.success(`Created ${claudeMdPath}`);
+    } else if (claudeMdResult.updated) {
+      clack.log.success(`Updated ${claudeMdPath}`);
+    } else {
+      clack.log.success(`Added CodeMind instructions to ${claudeMdPath}`);
+    }
   }
 }
 
@@ -205,4 +233,4 @@ async function initializeLocalProject(clack: typeof import('@clack/prompts')): P
 }
 
 // Re-export for CLI
-export type { InstallLocation };
+export type { InstallLocation, SupportedEditor };

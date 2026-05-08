@@ -307,6 +307,44 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'codemind_flows',
+    description: 'Get precomputed execution flows — call chains from entry points (routes, main, exported init functions). Shows how execution propagates from an entry point into the codebase. Run codemind index to refresh flows.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbol: {
+          type: 'string',
+          description: 'Entry point symbol name to get flow for. If omitted, returns all entry points.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max flows to return (default: 10)',
+          default: 10,
+        },
+        projectPath: projectPathProperty,
+      },
+    },
+  },
+  {
+    name: 'codemind_clusters',
+    description: 'Show detected code communities — groups of tightly connected symbols identified by label propagation over call and import edges. Useful for understanding module boundaries without knowing folder names.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Filter communities by name (e.g., "auth", "payment"). Returns all if omitted.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max communities to return (default: 20)',
+          default: 20,
+        },
+        projectPath: projectPathProperty,
+      },
+    },
+  },
+  {
     name: 'codemind_files',
     description: 'REQUIRED for file/folder exploration. Get the project file structure from the CodeMind index. Returns a tree view of all indexed files with metadata (language, symbol count). Much faster than Glob/filesystem scanning. Use this FIRST when exploring project structure, finding files, or understanding codebase organization.',
     inputSchema: {
@@ -510,12 +548,43 @@ export class ToolHandler {
           return await this.handleSimilar(args);
         case 'codemind_vector_status':
           return await this.handleVectorStatus(args);
+        case 'codemind_flows':
+          return await this.handleFlows(args);
+        case 'codemind_clusters':
+          return await this.handleClusters(args);
         default:
           return this.errorResult(`Unknown tool: ${toolName}`);
       }
     } catch (err) {
       return this.errorResult(`Tool execution failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  /**
+   * Fuse FTS and vector search results using Reciprocal Rank Fusion.
+   * Falls back to FTS-only when vec is empty (vector index unavailable).
+   */
+  private fuseSearchResults(
+    fts: SearchResult[],
+    vec: SearchResult[],
+    limit: number,
+  ): SearchResult[] {
+    if (vec.length === 0) return fts.slice(0, limit);
+    const K = 60;
+    const scores = new Map<string, { node: Node; score: number }>();
+    fts.forEach((r, i) => {
+      scores.set(r.node.id, { node: r.node, score: 1.0 / (K + i + 1) });
+    });
+    vec.forEach((r, i) => {
+      const rrf = 1.0 / (K + i + 1);
+      const existing = scores.get(r.node.id);
+      if (existing) existing.score += rrf;
+      else scores.set(r.node.id, { node: r.node, score: rrf });
+    });
+    return [...scores.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ node, score }) => ({ node, score }));
   }
 
   /**
@@ -530,10 +599,23 @@ export class ToolHandler {
     const rawLimit = Number(args.limit) || 10;
     const limit = clamp(rawLimit, 1, 100);
 
-    const results = cg.searchNodes(query, {
-      limit,
+    const ftsResults = cg.searchNodes(query, {
+      limit: limit * 2,
       kinds: kind ? [kind as NodeKind] : undefined,
     });
+
+    // Attempt vector search — gracefully degrade if not available
+    let vecResults: SearchResult[] = [];
+    try {
+      vecResults = await cg.semanticSearch(query, {
+        kind: kind ? kind as NodeKind : undefined,
+        limit: limit * 2,
+      });
+    } catch {
+      // Vector index unavailable — use FTS only
+    }
+
+    const results = this.fuseSearchResults(ftsResults, vecResults, limit);
 
     if (results.length === 0) {
       return this.textResult(`No results found for "${query}"`);
@@ -1205,6 +1287,70 @@ export class ToolHandler {
     }
 
     return this.textResult(lines.join('\n'));
+  }
+
+  /**
+   * Handle codemind_flows
+   */
+  private async handleFlows(args: Record<string, unknown>): Promise<ToolResult> {
+    const cg = this.getCodeMind(args.projectPath as string | undefined);
+    const symbol = args.symbol as string | undefined;
+    const limit = clamp((args.limit as number) || 10, 1, 50);
+
+    const flows = cg.getExecutionFlows(symbol, limit);
+
+    if (flows.length === 0) {
+      return this.textResult(
+        symbol
+          ? `No execution flow found for entry point "${symbol}". It may not be recognized as an entry point, or the index needs refreshing.`
+          : 'No execution flows indexed. Run `codemind index` to compute flows.'
+      );
+    }
+
+    const lines: string[] = ['## Execution Flows', ''];
+
+    for (const flow of flows) {
+      lines.push(`### ${flow.entryName} (entry point)`);
+      lines.push('');
+      flow.steps.forEach((step, i) => {
+        const indent = '  '.repeat(Math.min(i, 6));
+        lines.push(`${indent}→ ${step.name} (${step.kind}) — ${step.filePath}:${step.line}`);
+      });
+      lines.push('');
+    }
+
+    return this.textResult(this.truncateOutput(lines.join('\n')));
+  }
+
+  /**
+   * Handle codemind_clusters
+   */
+  private async handleClusters(args: Record<string, unknown>): Promise<ToolResult> {
+    const cg = this.getCodeMind(args.projectPath as string | undefined);
+    const query = args.query as string | undefined;
+    const limit = clamp((args.limit as number) || 20, 1, 100);
+
+    const clusters = cg.getClusters(query, limit);
+
+    if (clusters.length === 0) {
+      return this.textResult(
+        'No clusters computed. Run `codemind index` to compute communities, or the codebase may be too large for automatic clustering.'
+      );
+    }
+
+    const lines: string[] = [`## Code Communities (${clusters.length} clusters)`, ''];
+
+    for (const cluster of clusters) {
+      lines.push(`### ${cluster.name} (${cluster.members.length} symbols)`);
+      const preview = cluster.members.slice(0, 8).map(m => `${m.name}(${m.kind})`).join(', ');
+      lines.push(preview + (cluster.members.length > 8 ? ` ... +${cluster.members.length - 8} more` : ''));
+      if (cluster.files.length > 0) {
+        lines.push(`Files: ${cluster.files.slice(0, 3).join(', ')}${cluster.files.length > 3 ? ' ...' : ''}`);
+      }
+      lines.push('');
+    }
+
+    return this.textResult(this.truncateOutput(lines.join('\n')));
   }
 
   /**

@@ -1337,6 +1337,29 @@ program
   });
 
 /**
+ * codemind hooks install [--local]
+ */
+const hooksCmd = program
+  .command('hooks')
+  .description('Manage CodeMind hooks for editor integration');
+
+hooksCmd
+  .command('install')
+  .description('Install PostEdit auto-sync hook into Claude Code settings')
+  .option('-l, --local', 'Install in current project (.claude/settings.json) instead of global (~/.claude/settings.json)')
+  .action(async (options: { local?: boolean }) => {
+    const { installPostEditHook } = await import('../installer/hooks');
+    const location: 'global' | 'local' = options.local ? 'local' : 'global';
+    const result = installPostEditHook(location);
+    if (result.created) {
+      success(`PostEdit auto-sync hook installed (${location === 'global' ? '~/.claude/settings.json' : '.claude/settings.json'})`);
+      info('CodeMind will now sync automatically after every file edit in Claude Code.');
+    } else {
+      info('PostEdit auto-sync hook already installed — no changes made.');
+    }
+  });
+
+/**
  * codemind install
  */
 program

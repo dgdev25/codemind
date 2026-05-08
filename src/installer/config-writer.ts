@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 export type InstallLocation = 'global' | 'local';
+export type SupportedEditor = 'claude' | 'cursor' | 'windsurf';
 import {
   CLAUDE_MD_TEMPLATE,
   CODEMIND_SECTION_START,
@@ -167,6 +168,28 @@ export function writePermissions(location: InstallLocation): void {
   }
 
   writeJsonFile(settingsPath, settings);
+}
+
+/**
+ * Write the MCP server configuration to ~/.cursor/mcp.json
+ */
+export function writeCursorMcpConfig(): void {
+  const cursorPath = path.join(os.homedir(), '.cursor', 'mcp.json');
+  const config = readJsonFile(cursorPath);
+  if (!config.mcpServers) config.mcpServers = {};
+  config.mcpServers.codemind = getMcpServerConfig();
+  writeJsonFile(cursorPath, config);
+}
+
+/**
+ * Write the MCP server configuration to ~/.codeium/windsurf/mcp_config.json
+ */
+export function writeWindsurfMcpConfig(): void {
+  const windsurfPath = path.join(os.homedir(), '.codeium', 'windsurf', 'mcp_config.json');
+  const config = readJsonFile(windsurfPath);
+  if (!config.mcpServers) config.mcpServers = {};
+  config.mcpServers.codemind = getMcpServerConfig();
+  writeJsonFile(windsurfPath, config);
 }
 
 /**

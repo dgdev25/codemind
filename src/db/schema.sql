@@ -158,3 +158,23 @@ CREATE TABLE IF NOT EXISTS vector_sync (
     embedded_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vector_sync_embedded_at ON vector_sync(embedded_at);
+
+-- Precomputed execution flows from entry points (migration v6)
+CREATE TABLE IF NOT EXISTS execution_flows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entry_node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  flow_json TEXT NOT NULL,
+  depth INTEGER NOT NULL,
+  node_count INTEGER NOT NULL,
+  computed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_exec_flows_entry ON execution_flows(entry_node_id);
+
+-- Code community labels from label propagation clustering (migration v7)
+CREATE TABLE IF NOT EXISTS node_communities (
+  node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+  community_id TEXT NOT NULL,
+  community_name TEXT,
+  computed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_communities_id ON node_communities(community_id);

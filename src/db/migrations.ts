@@ -9,7 +9,7 @@ import { SqliteDatabase } from './sqlite-adapter';
 /**
  * Current schema version
  */
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 /**
  * Migration definition
@@ -77,6 +77,38 @@ const migrations: Migration[] = [
           embedded_at  INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_vector_sync_embedded_at ON vector_sync(embedded_at);
+      `);
+    },
+  },
+  {
+    version: 6,
+    description: 'Add execution_flows table for precomputed call chains from entry points',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS execution_flows (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entry_node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+          flow_json TEXT NOT NULL,
+          depth INTEGER NOT NULL,
+          node_count INTEGER NOT NULL,
+          computed_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_exec_flows_entry ON execution_flows(entry_node_id);
+      `);
+    },
+  },
+  {
+    version: 7,
+    description: 'Add node_communities table for label propagation community detection',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS node_communities (
+          node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+          community_id TEXT NOT NULL,
+          community_name TEXT,
+          computed_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_communities_id ON node_communities(community_id);
       `);
     },
   },

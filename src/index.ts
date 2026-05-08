@@ -502,6 +502,24 @@ export class CodeMind {
             await this.syncVectorIncremental();
           }
 
+          // Precompute execution flows (non-fatal cache)
+          if (result.success) {
+            try {
+              const { computeAndStoreFlows } = await import('./graph/execution-flows');
+              computeAndStoreFlows(this.queries, this.db.getDb());
+            } catch {
+              // Non-fatal — flows are a precomputed cache
+            }
+
+            // Compute code communities via label propagation (non-fatal cache)
+            try {
+              const { computeAndStoreCommunities } = await import('./graph/communities');
+              computeAndStoreCommunities(this.db.getDb());
+            } catch {
+              // Non-fatal
+            }
+          }
+
           return result;
         });
       } catch (err) {
@@ -1112,6 +1130,102 @@ export class CodeMind {
     }
     const stats = this.queries.getVectorSyncStats();
     return { enabled: true, ...stats };
+  }
+
+  // ===========================================================================
+  // Execution Flows
+  // ===========================================================================
+
+  /**
+   * Get precomputed execution flows (call chains from entry points).
+   *
+   * @param symbol - Filter by entry point symbol name (optional)
+   * @param limit - Maximum flows to return (default: 10)
+   */
+  getExecutionFlows(symbol?: string, limit: number = 10): Array<{
+    entryNodeId: string;
+    entryName: string;
+    steps: Array<{ id: string; name: string; kind: string; filePath: string; line: number }>;
+    depth: number;
+  }> {
+    const db = this.db.getDb();
+    let rows: Array<{ entry_node_id: string; flow_json: string; depth: number; node_count: number }>;
+
+    if (symbol) {
+      const nodes = this.searchNodes(symbol, { limit: 10 });
+      if (nodes.length === 0) return [];
+      const ids = nodes.map(r => r.node.id);
+      const placeholders = ids.map(() => '?').join(',');
+      rows = db.prepare(
+        `SELECT * FROM execution_flows WHERE entry_node_id IN (${placeholders}) LIMIT ?`
+      ).all(...ids, limit) as typeof rows;
+    } else {
+      rows = db.prepare(
+        'SELECT * FROM execution_flows ORDER BY node_count DESC LIMIT ?'
+      ).all(limit) as typeof rows;
+    }
+
+    return rows.map(row => {
+      const node = this.queries.getNodeById(row.entry_node_id);
+      return {
+        entryNodeId: row.entry_node_id,
+        entryName: node?.name ?? row.entry_node_id,
+        steps: JSON.parse(row.flow_json) as Array<{ id: string; name: string; kind: string; filePath: string; line: number }>,
+        depth: row.depth,
+      };
+    });
+  }
+
+  // ===========================================================================
+  // Code Communities (Clustering)
+  // ===========================================================================
+
+  /**
+   * Get code communities detected by label propagation.
+   *
+   * @param query - Filter by community name (optional)
+   * @param limit - Maximum communities to return (default: 20)
+   */
+  getClusters(query?: string, limit: number = 20): Array<{
+    communityId: string;
+    name: string;
+    members: Array<{ id: string; name: string; kind: string; filePath: string }>;
+    files: string[];
+  }> {
+    const db = this.db.getDb();
+
+    let communityIds: string[];
+    if (query) {
+      const rows = db.prepare(
+        "SELECT DISTINCT community_id, community_name FROM node_communities WHERE community_name LIKE ? LIMIT ?"
+      ).all(`%${query}%`, limit) as Array<{ community_id: string; community_name: string }>;
+      communityIds = rows.map(r => r.community_id);
+    } else {
+      const rows = db.prepare(
+        "SELECT community_id, COUNT(*) as cnt FROM node_communities GROUP BY community_id ORDER BY cnt DESC LIMIT ?"
+      ).all(limit) as Array<{ community_id: string; cnt: number }>;
+      communityIds = rows.map(r => r.community_id);
+    }
+
+    return communityIds.map(communityId => {
+      const rows = db.prepare(
+        `SELECT nc.community_name, n.id, n.name, n.kind, n.file_path
+         FROM node_communities nc JOIN nodes n ON nc.node_id = n.id
+         WHERE nc.community_id = ?`
+      ).all(communityId) as Array<{
+        community_name: string; id: string; name: string; kind: string; file_path: string;
+      }>;
+
+      const name = rows[0]?.community_name ?? communityId.slice(0, 8);
+      const files = [...new Set(rows.map(r => r.file_path))];
+
+      return {
+        communityId,
+        name,
+        members: rows.map(r => ({ id: r.id, name: r.name, kind: r.kind, filePath: r.file_path })),
+        files,
+      };
+    });
   }
 
   // ===========================================================================
