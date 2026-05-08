@@ -149,3 +149,12 @@ CREATE TABLE IF NOT EXISTS project_metadata (
     value TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+-- Vector embedding sync state (migration v5)
+CREATE TABLE IF NOT EXISTS vector_sync (
+    node_id      TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+    vector_id    TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    embedded_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vector_sync_embedded_at ON vector_sync(embedded_at);

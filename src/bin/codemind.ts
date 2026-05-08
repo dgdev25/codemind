@@ -1,39 +1,39 @@
 #!/usr/bin/env node
 /**
- * CodeGraph CLI
+ * CodeMind CLI
  *
- * Command-line interface for CodeGraph code intelligence.
+ * Command-line interface for CodeMind code intelligence.
  *
  * Usage:
- *   codegraph                    Run interactive installer (when no args)
- *   codegraph install            Run interactive installer
- *   codegraph init [path]        Initialize CodeGraph in a project
- *   codegraph uninit [path]      Remove CodeGraph from a project
- *   codegraph index [path]       Index all files in the project
- *   codegraph sync [path]        Sync changes since last index
- *   codegraph status [path]      Show index status
- *   codegraph query <search>     Search for symbols
- *   codegraph files [options]    Show project file structure
- *   codegraph context <task>     Build context for a task
- *   codegraph affected [files]   Find test files affected by changes
+ *   codemind                    Run interactive installer (when no args)
+ *   codemind install            Run interactive installer
+ *   codemind init [path]        Initialize CodeMind in a project
+ *   codemind uninit [path]      Remove CodeMind from a project
+ *   codemind index [path]       Index all files in the project
+ *   codemind sync [path]        Sync changes since last index
+ *   codemind status [path]      Show index status
+ *   codemind query <search>     Search for symbols
+ *   codemind files [options]    Show project file structure
+ *   codemind context <task>     Build context for a task
+ *   codemind affected [files]   Find test files affected by changes
  */
 
 import { Command } from 'commander';
 import * as path from 'path';
 import * as fs from 'fs';
-import { getCodeGraphDir, isInitialized } from '../directory';
+import { getCodeMindDir, isInitialized } from '../directory';
 import { createShimmerProgress } from '../ui/shimmer-progress';
 
-// Lazy-load heavy modules (CodeGraph, runInstaller) to keep CLI startup fast.
-async function loadCodeGraph(): Promise<typeof import('../index')> {
+// Lazy-load heavy modules (CodeMind, runInstaller) to keep CLI startup fast.
+async function loadCodeMind(): Promise<typeof import('../index')> {
   try {
     return await import('../index');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('\x1b[31m✗\x1b[0m Failed to load CodeGraph modules.');
+    console.error('\x1b[31m✗\x1b[0m Failed to load CodeMind modules.');
     console.error(`\n  Node: ${process.version}  Platform: ${process.platform} ${process.arch}`);
     console.error(`\n  Error: ${msg}`);
-    console.error('\n  Try reinstalling with: npm install -g @colbymchenry/codegraph\n');
+    console.error('\n  Try reinstalling with: npm install -g @colbymchenry/codemind\n');
     process.exit(1);
   }
 }
@@ -49,14 +49,14 @@ const nodeVersion = process.versions.node;
 const nodeMajor = parseInt(nodeVersion.split('.')[0] ?? '0', 10);
 if (nodeMajor >= 25) {
   console.warn(
-    '\x1b[33m⚠\x1b[0m  CodeGraph may crash on Node.js %s due to a V8 WASM compiler bug in Node 25+.',
+    '\x1b[33m⚠\x1b[0m  CodeMind may crash on Node.js %s due to a V8 WASM compiler bug in Node 25+.',
     nodeVersion
   );
   console.warn(
     '   Please use Node.js 22 LTS instead: https://nodejs.org/en/download'
   );
   console.warn(
-    '   See: https://github.com/colbymchenry/codegraph/issues/81\n'
+    '   See: https://github.com/colbymchenry/codemind/issues/81\n'
   );
 }
 
@@ -74,11 +74,11 @@ if (process.argv.length === 2) {
 }
 
 process.on('uncaughtException', (error) => {
-  console.error('[CodeGraph] Uncaught exception:', error);
+  console.error('[CodeMind] Uncaught exception:', error);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[CodeGraph] Unhandled rejection:', reason);
+  console.error('[CodeMind] Unhandled rejection:', reason);
 });
 
 function main() {
@@ -120,7 +120,7 @@ const chalk = {
 };
 
 program
-  .name('codegraph')
+  .name('codemind')
   .description('Code intelligence and knowledge graph for any codebase')
   .version(packageJson.version);
 
@@ -130,19 +130,19 @@ program
 
 /**
  * Resolve project path from argument or current directory
- * Walks up parent directories to find nearest initialized CodeGraph project
- * (must have .codegraph/codegraph.db, not just .codegraph/lessons.db)
+ * Walks up parent directories to find nearest initialized CodeMind project
+ * (must have .codemind/codemind.db, not just .codemind/lessons.db)
  */
 function resolveProjectPath(pathArg?: string): string {
   const absolutePath = path.resolve(pathArg || process.cwd());
 
-  // If exact path is initialized (has codegraph.db), use it
+  // If exact path is initialized (has codemind.db), use it
   if (isInitialized(absolutePath)) {
     return absolutePath;
   }
 
-  // Walk up to find nearest parent with CodeGraph initialized
-  // Note: findNearestCodeGraphRoot finds any .codegraph folder, but we need one with codegraph.db
+  // Walk up to find nearest parent with CodeMind initialized
+  // Note: findNearestCodeMindRoot finds any .codemind folder, but we need one with codemind.db
   let current = absolutePath;
   const root = path.parse(current).root;
 
@@ -320,14 +320,14 @@ function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexR
 
     if (projectPath) {
       writeErrorLog(projectPath, result.errors);
-      clack.log.info('See .codegraph/errors.log for details');
+      clack.log.info('See .codemind/errors.log for details');
     }
 
     if (result.filesIndexed > 0) {
       clack.log.info('The index is fully usable — only the failed files are missing.');
     }
   } else if (projectPath) {
-    const logPath = path.join(projectPath, '.codegraph', 'errors.log');
+    const logPath = path.join(projectPath, '.codemind', 'errors.log');
     if (fs.existsSync(logPath)) {
       fs.unlinkSync(logPath);
     }
@@ -335,10 +335,10 @@ function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexR
 }
 
 /**
- * Write detailed error log to .codegraph/errors.log
+ * Write detailed error log to .codemind/errors.log
  */
 function writeErrorLog(projectPath: string, errors: Array<{ message: string; filePath?: string; severity: string; code?: string }>): void {
-  const cgDir = path.join(projectPath, '.codegraph');
+  const cgDir = path.join(projectPath, '.codemind');
   if (!fs.existsSync(cgDir)) return;
 
   const logPath = path.join(cgDir, 'errors.log');
@@ -362,7 +362,7 @@ function writeErrorLog(projectPath: string, errors: Array<{ message: string; fil
   }
 
   const lines: string[] = [
-    `CodeGraph Error Log — ${new Date().toISOString()}`,
+    `CodeMind Error Log — ${new Date().toISOString()}`,
     `${errorsByFile.size} files with errors`,
     '',
   ];
@@ -385,29 +385,29 @@ function writeErrorLog(projectPath: string, errors: Array<{ message: string; fil
 // =============================================================================
 
 /**
- * codegraph init [path]
+ * codemind init [path]
  */
 program
   .command('init [path]')
-  .description('Initialize CodeGraph in a project directory')
+  .description('Initialize CodeMind in a project directory')
   .option('-i, --index', 'Run initial indexing after initialization')
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
   .action(async (pathArg: string | undefined, options: { index?: boolean; verbose?: boolean }) => {
     const projectPath = path.resolve(pathArg || process.cwd());
     const clack = await importESM('@clack/prompts');
 
-    clack.intro('Initializing CodeGraph');
+    clack.intro('Initializing CodeMind');
 
     try {
       if (isInitialized(projectPath)) {
         clack.log.warn(`Already initialized in ${projectPath}`);
-        clack.log.info('Use "codegraph index" to re-index or "codegraph sync" to update');
+        clack.log.info('Use "codemind index" to re-index or "codemind sync" to update');
         clack.outro('');
         return;
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.init(projectPath, { index: false });
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.init(projectPath, { index: false });
       clack.log.success(`Initialized in ${projectPath}`);
 
       if (options.index) {
@@ -429,7 +429,7 @@ program
 
         printIndexResult(clack, result, projectPath);
       } else {
-        clack.log.info('Run "codegraph index" to index the project');
+        clack.log.info('Run "codemind index" to index the project');
       }
 
       clack.outro('Done');
@@ -441,18 +441,18 @@ program
   });
 
 /**
- * codegraph uninit [path]
+ * codemind uninit [path]
  */
 program
   .command('uninit [path]')
-  .description('Remove CodeGraph from a project (deletes .codegraph/ directory)')
+  .description('Remove CodeMind from a project (deletes .codemind/ directory)')
   .option('-f, --force', 'Skip confirmation prompt')
   .action(async (pathArg: string | undefined, options: { force?: boolean }) => {
     const projectPath = resolveProjectPath(pathArg);
 
     try {
       if (!isInitialized(projectPath)) {
-        warn(`CodeGraph is not initialized in ${projectPath}`);
+        warn(`CodeMind is not initialized in ${projectPath}`);
         return;
       }
 
@@ -462,7 +462,7 @@ program
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
         const answer = await new Promise<string>((resolve) => {
           rl.question(
-            chalk.yellow('⚠ This will permanently delete all CodeGraph data. Continue? (y/N) '),
+            chalk.yellow('⚠ This will permanently delete all CodeMind data. Continue? (y/N) '),
             resolve
           );
         });
@@ -474,11 +474,11 @@ program
         }
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = CodeGraph.openSync(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = CodeMind.openSync(projectPath);
       cg.uninitialize();
 
-      success(`Removed CodeGraph from ${projectPath}`);
+      success(`Removed CodeMind from ${projectPath}`);
     } catch (err) {
       error(`Failed to uninitialize: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
@@ -486,7 +486,75 @@ program
   });
 
 /**
- * codegraph index [path]
+ * Build (or rebuild) the vector index for all nodes pending embedding.
+ * Operates in batches of batchSize and logs progress to stdout.
+ */
+async function runBuildVectors(
+  projectPath: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  qb: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  clack?: any,
+): Promise<void> {
+  const { Embedder, VectorIndex, buildEmbeddingDocument, contentHash } =
+    await import('../vector/index') as typeof import('../vector/index');
+
+  const { loadConfig: loadCfg } = await import('../config') as typeof import('../config');
+  const cfg = loadCfg(projectPath);
+  const vectorCfg = cfg.vector;
+
+  if (!vectorCfg?.enabled) {
+    const msg = 'Vector search is not enabled in config.json (vector.enabled must be true)';
+    if (clack) clack.log.warn(msg);
+    else process.stdout.write(`[warn] ${msg}\n`);
+    return;
+  }
+
+  const storagePath = path.join(projectPath, vectorCfg.storagePath);
+  const vi = new VectorIndex(storagePath);
+  await vi.init({
+    hnswM: vectorCfg.hnswM,
+    efConstruction: vectorCfg.efConstruction,
+    efSearch: vectorCfg.efSearch,
+    quantization: vectorCfg.quantization,
+  });
+
+  const embedder = new Embedder();
+  await embedder.init();
+
+  const nodes = qb.getNodesForVectorSync() as import('../types').Node[];
+  const total = nodes.length;
+
+  if (total === 0) {
+    const msg = 'All nodes already embedded — nothing to do';
+    if (clack) clack.log.info(msg);
+    else process.stdout.write(`${msg}\n`);
+    return;
+  }
+
+  const batchSize = vectorCfg.batchSize ?? 64;
+  process.stdout.write(`Embedding ${total} nodes...\n`);
+
+  for (let i = 0; i < total; i += batchSize) {
+    const batch = nodes.slice(i, i + batchSize);
+    const docs = batch.map(buildEmbeddingDocument);
+    const vectors = await embedder.embedBatch(docs);
+
+    await vi.upsertBatch(batch.map((node, j) => ({ node, vector: vectors[j]! })));
+
+    for (let j = 0; j < batch.length; j++) {
+      const hash = contentHash(docs[j]!);
+      qb.upsertVectorSync(batch[j]!.id, batch[j]!.id, hash);
+    }
+
+    process.stdout.write(`  [${Math.min(i + batchSize, total)}/${total}]\n`);
+  }
+
+  process.stdout.write(`Vector index built: ${total} nodes embedded\n`);
+}
+
+/**
+ * codemind index [path]
  */
 program
   .command('index [path]')
@@ -494,24 +562,26 @@ program
   .option('-f, --force', 'Force full re-index even if already indexed')
   .option('-q, --quiet', 'Suppress progress output')
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
-  .action(async (pathArg: string | undefined, options: { force?: boolean; quiet?: boolean; verbose?: boolean }) => {
+  .option('--build-vectors', 'Embed all nodes into the vector index after indexing')
+  .action(async (pathArg: string | undefined, options: { force?: boolean; quiet?: boolean; verbose?: boolean; buildVectors?: boolean }) => {
     const projectPath = resolveProjectPath(pathArg);
 
     try {
       if (!isInitialized(projectPath)) {
-        error(`CodeGraph not initialized in ${projectPath}`);
-        info('Run "codegraph init" first');
+        error(`CodeMind not initialized in ${projectPath}`);
+        info('Run "codemind init" first');
         process.exit(1);
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.open(projectPath);
 
       if (options.quiet) {
         // Quiet mode: no UI, just run
         if (options.force) cg.clear();
         const result = await cg.indexAll();
         if (!result.success) process.exit(1);
+        if (options.buildVectors) await runBuildVectors(projectPath, cg.getQueryBuilder());
         cg.destroy();
         return;
       }
@@ -546,6 +616,10 @@ program
         process.exit(1);
       }
 
+      if (options.buildVectors) {
+        await runBuildVectors(projectPath, cg.getQueryBuilder(), clack);
+      }
+
       clack.outro('Done');
       cg.destroy();
     } catch (err) {
@@ -555,7 +629,7 @@ program
   });
 
 /**
- * codegraph sync [path]
+ * codemind sync [path]
  */
 program
   .command('sync [path]')
@@ -567,13 +641,13 @@ program
     try {
       if (!isInitialized(projectPath)) {
         if (!options.quiet) {
-          error(`CodeGraph not initialized in ${projectPath}`);
+          error(`CodeMind not initialized in ${projectPath}`);
         }
         process.exit(1);
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.open(projectPath);
 
       if (options.quiet) {
         await cg.sync();
@@ -582,7 +656,7 @@ program
       }
 
       const clack = await importESM('@clack/prompts');
-      clack.intro('Syncing CodeGraph');
+      clack.intro('Syncing CodeMind');
 
       process.stdout.write(`${colors.dim}│${colors.reset}\n`);
       const progress = createShimmerProgress();
@@ -617,7 +691,7 @@ program
   });
 
 /**
- * codegraph status [path]
+ * codemind status [path]
  */
 program
   .command('status [path]')
@@ -632,15 +706,15 @@ program
           console.log(JSON.stringify({ initialized: false, projectPath }));
           return;
         }
-        console.log(chalk.bold('\nCodeGraph Status\n'));
+        console.log(chalk.bold('\nCodeMind Status\n'));
         info(`Project: ${projectPath}`);
         warn('Not initialized');
-        info('Run "codegraph init" to initialize');
+        info('Run "codemind init" to initialize');
         return;
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.open(projectPath);
       const stats = cg.getStats();
       const changes = cg.getChangedFiles();
 
@@ -665,7 +739,7 @@ program
         return;
       }
 
-      console.log(chalk.bold('\nCodeGraph Status\n'));
+      console.log(chalk.bold('\nCodeMind Status\n'));
 
       // Project info
       console.log(chalk.cyan('Project:'), projectPath);
@@ -712,7 +786,7 @@ program
         if (changes.removed.length > 0) {
           console.log(`  Removed:   ${changes.removed.length} files`);
         }
-        info('Run "codegraph sync" to update the index');
+        info('Run "codemind sync" to update the index');
       } else {
         success('Index is up to date');
       }
@@ -726,7 +800,7 @@ program
   });
 
 /**
- * codegraph query <search>
+ * codemind query <search>
  */
 program
   .command('query <search>')
@@ -740,12 +814,12 @@ program
 
     try {
       if (!isInitialized(projectPath)) {
-        error(`CodeGraph not initialized in ${projectPath}`);
+        error(`CodeMind not initialized in ${projectPath}`);
         process.exit(1);
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.open(projectPath);
 
       const limit = parseInt(options.limit || '10', 10);
       const results = cg.searchNodes(search, {
@@ -788,7 +862,7 @@ program
   });
 
 /**
- * codegraph files [path]
+ * codemind files [path]
  */
 program
   .command('files')
@@ -813,16 +887,16 @@ program
 
     try {
       if (!isInitialized(projectPath)) {
-        error(`CodeGraph not initialized in ${projectPath}`);
+        error(`CodeMind not initialized in ${projectPath}`);
         process.exit(1);
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.open(projectPath);
       let files = cg.getFiles();
 
       if (files.length === 0) {
-        info('No files indexed. Run "codegraph index" first.');
+        info('No files indexed. Run "codemind index" first.');
         cg.destroy();
         return;
       }
@@ -994,7 +1068,7 @@ function printFileTree(
 }
 
 /**
- * codegraph context <task>
+ * codemind context <task>
  */
 program
   .command('context <task>')
@@ -1015,12 +1089,12 @@ program
 
     try {
       if (!isInitialized(projectPath)) {
-        error(`CodeGraph not initialized in ${projectPath}`);
+        error(`CodeMind not initialized in ${projectPath}`);
         process.exit(1);
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.open(projectPath);
 
       const context = await cg.buildContext(task, {
         maxNodes: parseInt(options.maxNodes || '50', 10),
@@ -1040,11 +1114,11 @@ program
   });
 
 /**
- * codegraph serve
+ * codemind serve
  */
 program
   .command('serve')
-  .description('Start CodeGraph as an MCP server for AI assistants')
+  .description('Start CodeMind as an MCP server for AI assistants')
   .option('-p, --path <path>', 'Project path (optional for MCP mode, uses rootUri from client)')
   .option('--mcp', 'Run as MCP server (stdio transport)')
   .action(async (options: { path?: string; mcp?: boolean }) => {
@@ -1060,28 +1134,28 @@ program
       } else {
         // Default: show info about MCP mode.
         // Use stderr so stdout stays clean for any piped/stdio usage.
-        console.error(chalk.bold('\nCodeGraph MCP Server\n'));
+        console.error(chalk.bold('\nCodeMind MCP Server\n'));
         console.error(chalk.blue('ℹ') + ' Use --mcp flag to start the MCP server');
         console.error('\nTo use with Claude Code, add to your MCP configuration:');
         console.error(chalk.dim(`
 {
   "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
+    "codemind": {
+      "command": "codemind",
       "args": ["serve", "--mcp"]
     }
   }
 }
 `));
         console.error('Available tools:');
-        console.error(chalk.cyan('  codegraph_search') + '    - Search for code symbols');
-        console.error(chalk.cyan('  codegraph_context') + '   - Build context for a task');
-        console.error(chalk.cyan('  codegraph_callers') + '   - Find callers of a symbol');
-        console.error(chalk.cyan('  codegraph_callees') + '   - Find what a symbol calls');
-        console.error(chalk.cyan('  codegraph_impact') + '    - Analyze impact of changes');
-        console.error(chalk.cyan('  codegraph_node') + '      - Get symbol details');
-        console.error(chalk.cyan('  codegraph_files') + '     - Get project file structure');
-        console.error(chalk.cyan('  codegraph_status') + '    - Get index status');
+        console.error(chalk.cyan('  codemind_search') + '    - Search for code symbols');
+        console.error(chalk.cyan('  codemind_context') + '   - Build context for a task');
+        console.error(chalk.cyan('  codemind_callers') + '   - Find callers of a symbol');
+        console.error(chalk.cyan('  codemind_callees') + '   - Find what a symbol calls');
+        console.error(chalk.cyan('  codemind_impact') + '    - Analyze impact of changes');
+        console.error(chalk.cyan('  codemind_node') + '      - Get symbol details');
+        console.error(chalk.cyan('  codemind_files') + '     - Get project file structure');
+        console.error(chalk.cyan('  codemind_status') + '    - Get index status');
       }
     } catch (err) {
       error(`Failed to start server: ${err instanceof Error ? err.message : String(err)}`);
@@ -1090,7 +1164,7 @@ program
   });
 
 /**
- * codegraph unlock [path]
+ * codemind unlock [path]
  */
 program
   .command('unlock [path]')
@@ -1100,11 +1174,11 @@ program
 
     try {
       if (!isInitialized(projectPath)) {
-        error(`CodeGraph not initialized in ${projectPath}`);
+        error(`CodeMind not initialized in ${projectPath}`);
         return;
       }
 
-      const lockPath = path.join(getCodeGraphDir(projectPath), 'codegraph.lock');
+      const lockPath = path.join(getCodeMindDir(projectPath), 'codemind.lock');
 
       if (!fs.existsSync(lockPath)) {
         info('No lock file found — nothing to do');
@@ -1120,14 +1194,14 @@ program
   });
 
 /**
- * codegraph affected [files...]
+ * codemind affected [files...]
  *
  * Find test files affected by the given source files.
  * Traces dependency edges transitively to find test files that depend on changed code.
  *
  * Usage:
- *   git diff --name-only | codegraph affected --stdin
- *   codegraph affected src/lib/components/Editor.svelte src/routes/+page.svelte
+ *   git diff --name-only | codemind affected --stdin
+ *   codemind affected src/lib/components/Editor.svelte src/routes/+page.svelte
  */
 program
   .command('affected [files...]')
@@ -1143,7 +1217,7 @@ program
 
     try {
       if (!isInitialized(projectPath)) {
-        error(`CodeGraph not initialized in ${projectPath}`);
+        error(`CodeMind not initialized in ${projectPath}`);
         process.exit(1);
       }
 
@@ -1161,8 +1235,8 @@ program
         process.exit(0);
       }
 
-      const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      const { default: CodeMind } = await loadCodeMind();
+      const cg = await CodeMind.open(projectPath);
       const maxDepth = parseInt(options.depth || '5', 10);
 
       // Common test file patterns
@@ -1258,7 +1332,7 @@ program
   });
 
 /**
- * codegraph install
+ * codemind install
  */
 program
   .command('install')

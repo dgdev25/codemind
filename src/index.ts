@@ -1,5 +1,5 @@
 /**
- * CodeGraph
+ * CodeMind
  *
  * A local-first code intelligence system that builds a semantic
  * knowledge graph from any codebase.
@@ -7,7 +7,7 @@
 
 import * as path from 'path';
 import {
-  CodeGraphConfig,
+  CodeMindConfig,
   Node,
   Edge,
   FileRecord,
@@ -22,6 +22,8 @@ import {
   TaskContext,
   BuildContextOptions,
   FindRelevantContextOptions,
+  NodeKind,
+  Language,
 } from './types';
 import { DatabaseConnection, getDatabasePath } from './db';
 import { QueryBuilder } from './db/queries';
@@ -49,22 +51,23 @@ import { GraphTraverser, GraphQueryManager } from './graph';
 import { ContextBuilder, createContextBuilder } from './context';
 import { Mutex, FileLock } from './utils';
 import { FileWatcher, WatchOptions } from './sync';
+import { VectorIndex, Embedder, buildEmbeddingDocument, contentHash } from './vector';
 
 // Re-export types for consumers
 export * from './types';
 export { getDatabasePath } from './db';
 export { getConfigPath } from './config';
 export {
-  getCodeGraphDir,
+  getCodeMindDir,
   isInitialized,
-  findNearestCodeGraphRoot,
-  CODEGRAPH_DIR,
+  findNearestCodeMindRoot,
+  CODEMIND_DIR,
 } from './directory';
 export { IndexProgress, IndexResult, SyncResult } from './extraction';
 export { detectLanguage, isLanguageSupported, isGrammarLoaded, getSupportedLanguages, initGrammars, loadGrammarsForLanguages, loadAllGrammars } from './extraction';
 export { ResolutionResult } from './resolution';
 export {
-  CodeGraphError,
+  CodeMindError,
   FileError,
   ParseError,
   DatabaseError,
@@ -82,11 +85,11 @@ export { FileWatcher, WatchOptions } from './sync';
 export { MCPServer } from './mcp';
 
 /**
- * Options for initializing a new CodeGraph project
+ * Options for initializing a new CodeMind project
  */
 export interface InitOptions {
   /** Custom configuration overrides */
-  config?: Partial<CodeGraphConfig>;
+  config?: Partial<CodeMindConfig>;
 
   /** Whether to run initial indexing after init */
   index?: boolean;
@@ -96,7 +99,7 @@ export interface InitOptions {
 }
 
 /**
- * Options for opening an existing CodeGraph project
+ * Options for opening an existing CodeMind project
  */
 export interface OpenOptions {
   /** Whether to run sync if files have changed */
@@ -121,20 +124,23 @@ export interface IndexOptions {
 }
 
 /**
- * Main CodeGraph class
+ * Main CodeMind class
  *
  * Provides the primary interface for interacting with the code knowledge graph.
  */
-export class CodeGraph {
+export class CodeMind {
   private db: DatabaseConnection;
   private queries: QueryBuilder;
-  private config: CodeGraphConfig;
+  private config: CodeMindConfig;
   private projectRoot: string;
   private orchestrator: ExtractionOrchestrator;
   private resolver: ReferenceResolver;
   private graphManager: GraphQueryManager;
   private traverser: GraphTraverser;
   private contextBuilder: ContextBuilder;
+
+  private vectorIndex: VectorIndex | null = null;
+  private embedder: Embedder | null = null;
 
   // Mutex for preventing concurrent indexing operations (in-process)
   private indexMutex = new Mutex();
@@ -148,7 +154,7 @@ export class CodeGraph {
   private constructor(
     db: DatabaseConnection,
     queries: QueryBuilder,
-    config: CodeGraphConfig,
+    config: CodeMindConfig,
     projectRoot: string
   ) {
     this.db = db;
@@ -156,7 +162,7 @@ export class CodeGraph {
     this.config = config;
     this.projectRoot = projectRoot;
     this.fileLock = new FileLock(
-      path.join(projectRoot, '.codegraph', 'codegraph.lock')
+      path.join(projectRoot, '.codemind', 'codemind.lock')
     );
     this.orchestrator = new ExtractionOrchestrator(projectRoot, config, queries);
     this.resolver = createResolver(projectRoot, queries);
@@ -170,25 +176,80 @@ export class CodeGraph {
   }
 
   // ===========================================================================
+  // Vector initialization (internal)
+  // ===========================================================================
+
+  private async initVector(): Promise<void> {
+    if (!this.config.vector?.enabled) return;
+    const vcfg = this.config.vector;
+    const vi = new VectorIndex(vcfg.storagePath);
+    await vi.init({
+      hnswM: vcfg.hnswM,
+      efConstruction: vcfg.efConstruction,
+      efSearch: vcfg.efSearch,
+      quantization: vcfg.quantization,
+    });
+    const emb = new Embedder();
+    await emb.init();
+    this.vectorIndex = vi;
+    this.embedder = emb;
+    this.contextBuilder.setVectorComponents(vi, emb);
+  }
+
+  // ===========================================================================
+  // Vector Sync
+  // ===========================================================================
+
+  /**
+   * Incrementally embeds nodes that are new or changed since their last embedding.
+   * Safe to call concurrently — returns immediately if vector is not enabled.
+   */
+  private async syncVectorIncremental(): Promise<{ embedded: number; durationMs: number }> {
+    if (!this.vectorIndex || !this.embedder) return { embedded: 0, durationMs: 0 };
+
+    const startMs = Date.now();
+    const pending = this.queries.getNodesForVectorSync();
+    if (pending.length === 0) return { embedded: 0, durationMs: 0 };
+
+    const batchSize = this.config.vector?.batchSize ?? 64;
+    let embedded = 0;
+
+    for (let offset = 0; offset < pending.length; offset += batchSize) {
+      const batch = pending.slice(offset, offset + batchSize);
+      const docs = batch.map(node => buildEmbeddingDocument(node));
+      const hashes = docs.map(doc => contentHash(doc));
+      const vectors = await this.embedder.embedBatch(docs);
+      const entries = batch.map((node, i) => ({ node, vector: vectors[i]! }));
+      await this.vectorIndex.upsertBatch(entries);
+      for (let i = 0; i < batch.length; i++) {
+        this.queries.upsertVectorSync(batch[i]!.id, batch[i]!.id, hashes[i]!);
+      }
+      embedded += batch.length;
+    }
+
+    return { embedded, durationMs: Date.now() - startMs };
+  }
+
+  // ===========================================================================
   // Lifecycle Methods
   // ===========================================================================
 
   /**
-   * Initialize a new CodeGraph project
+   * Initialize a new CodeMind project
    *
-   * Creates the .CodeGraph directory, database, and configuration.
+   * Creates the .CodeMind directory, database, and configuration.
    *
    * @param projectRoot - Path to the project root directory
    * @param options - Initialization options
-   * @returns A new CodeGraph instance
+   * @returns A new CodeMind instance
    */
-  static async init(projectRoot: string, options: InitOptions = {}): Promise<CodeGraph> {
+  static async init(projectRoot: string, options: InitOptions = {}): Promise<CodeMind> {
     await initGrammars();
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if already initialized
     if (isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph already initialized in ${resolvedRoot}`);
+      throw new Error(`CodeMind already initialized in ${resolvedRoot}`);
     }
 
     // Create directory structure
@@ -206,7 +267,10 @@ export class CodeGraph {
     const db = DatabaseConnection.initialize(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    const instance = new CodeGraph(db, queries, config, resolvedRoot);
+    const instance = new CodeMind(db, queries, config, resolvedRoot);
+
+    // Initialize vector index when configured
+    await instance.initVector();
 
     // Run initial indexing if requested
     if (options.index) {
@@ -219,12 +283,12 @@ export class CodeGraph {
   /**
    * Initialize synchronously (without indexing)
    */
-  static initSync(projectRoot: string, options: Omit<InitOptions, 'index' | 'onProgress'> = {}): CodeGraph {
+  static initSync(projectRoot: string, options: Omit<InitOptions, 'index' | 'onProgress'> = {}): CodeMind {
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if already initialized
     if (isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph already initialized in ${resolvedRoot}`);
+      throw new Error(`CodeMind already initialized in ${resolvedRoot}`);
     }
 
     // Create directory structure
@@ -242,29 +306,29 @@ export class CodeGraph {
     const db = DatabaseConnection.initialize(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    return new CodeGraph(db, queries, config, resolvedRoot);
+    return new CodeMind(db, queries, config, resolvedRoot);
   }
 
   /**
-   * Open an existing CodeGraph project
+   * Open an existing CodeMind project
    *
    * @param projectRoot - Path to the project root directory
    * @param options - Open options
-   * @returns A CodeGraph instance
+   * @returns A CodeMind instance
    */
-  static async open(projectRoot: string, options: OpenOptions = {}): Promise<CodeGraph> {
+  static async open(projectRoot: string, options: OpenOptions = {}): Promise<CodeMind> {
     await initGrammars();
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if initialized
     if (!isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph not initialized in ${resolvedRoot}. Run init() first.`);
+      throw new Error(`CodeMind not initialized in ${resolvedRoot}. Run init() first.`);
     }
 
     // Validate directory structure
     const validation = validateDirectory(resolvedRoot);
     if (!validation.valid) {
-      throw new Error(`Invalid CodeGraph directory: ${validation.errors.join(', ')}`);
+      throw new Error(`Invalid CodeMind directory: ${validation.errors.join(', ')}`);
     }
 
     // Load configuration
@@ -275,7 +339,10 @@ export class CodeGraph {
     const db = DatabaseConnection.open(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    const instance = new CodeGraph(db, queries, config, resolvedRoot);
+    const instance = new CodeMind(db, queries, config, resolvedRoot);
+
+    // Initialize vector index when configured
+    await instance.initVector();
 
     // Sync if requested
     if (options.sync) {
@@ -288,18 +355,18 @@ export class CodeGraph {
   /**
    * Open synchronously (without sync)
    */
-  static openSync(projectRoot: string): CodeGraph {
+  static openSync(projectRoot: string): CodeMind {
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if initialized
     if (!isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph not initialized in ${resolvedRoot}. Run init() first.`);
+      throw new Error(`CodeMind not initialized in ${resolvedRoot}. Run init() first.`);
     }
 
     // Validate directory structure
     const validation = validateDirectory(resolvedRoot);
     if (!validation.valid) {
-      throw new Error(`Invalid CodeGraph directory: ${validation.errors.join(', ')}`);
+      throw new Error(`Invalid CodeMind directory: ${validation.errors.join(', ')}`);
     }
 
     // Load configuration
@@ -310,18 +377,18 @@ export class CodeGraph {
     const db = DatabaseConnection.open(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    return new CodeGraph(db, queries, config, resolvedRoot);
+    return new CodeMind(db, queries, config, resolvedRoot);
   }
 
   /**
-   * Check if a directory has been initialized as a CodeGraph project
+   * Check if a directory has been initialized as a CodeMind project
    */
   static isInitialized(projectRoot: string): boolean {
     return isInitialized(path.resolve(projectRoot));
   }
 
   /**
-   * Close the CodeGraph instance and release resources
+   * Close the CodeMind instance and release resources
    */
   close(): void {
     this.unwatch();
@@ -337,14 +404,14 @@ export class CodeGraph {
   /**
    * Get the current configuration
    */
-  getConfig(): CodeGraphConfig {
+  getConfig(): CodeMindConfig {
     return { ...this.config };
   }
 
   /**
    * Update configuration
    */
-  updateConfig(updates: Partial<CodeGraphConfig>): void {
+  updateConfig(updates: Partial<CodeMindConfig>): void {
     Object.assign(this.config, updates);
     saveConfig(this.projectRoot, this.config);
     // Recreate orchestrator and resolver with new config
@@ -361,6 +428,14 @@ export class CodeGraph {
    */
   getProjectRoot(): string {
     return this.projectRoot;
+  }
+
+  /**
+   * Expose the QueryBuilder for consumers that need direct DB access
+   * (e.g., the --build-vectors CLI path).
+   */
+  getQueryBuilder(): QueryBuilder {
+    return this.queries;
   }
 
   // ===========================================================================
@@ -400,6 +475,10 @@ export class CodeGraph {
               total,
             });
           });
+        }
+
+        if (result.success && this.config.vector?.indexOnSync) {
+          await this.syncVectorIncremental();
         }
 
         return result;
@@ -481,6 +560,10 @@ export class CodeGraph {
               });
             });
           }
+        }
+
+        if (this.vectorIndex && (result.filesAdded > 0 || result.filesModified > 0)) {
+          this.syncVectorIncremental().catch(() => { /* vector sync failures are non-fatal */ });
         }
 
         return result;
@@ -933,6 +1016,80 @@ export class CodeGraph {
   }
 
   // ===========================================================================
+  // Vector Search Methods
+  // ===========================================================================
+
+  /**
+   * Search code by semantic meaning using embeddings.
+   *
+   * Requires vector index (codemind index --build-vectors).
+   * Returns empty array if vector index is not enabled or not ready.
+   *
+   * @param query - Natural language description of what you are looking for
+   * @param options - Optional filters and limit
+   */
+  async semanticSearch(
+    query: string,
+    options?: { kind?: NodeKind; language?: Language; limit?: number }
+  ): Promise<SearchResult[]> {
+    if (!this.vectorIndex || !this.embedder) return [];
+    const limit = options?.limit ?? 10;
+    const queryVec = await this.embedder.embed(query);
+    const filter: { kind?: NodeKind[]; language?: Language[] } = {};
+    if (options?.kind) filter.kind = [options.kind];
+    if (options?.language) filter.language = [options.language];
+    const hits = await this.vectorIndex.searchFiltered(queryVec, filter, limit);
+    const ids = hits.map(h => h.nodeId);
+    const nodeMap = new Map(
+      this.queries.getNodesByIds(ids).map(n => [n.id, n])
+    );
+    return hits.flatMap(h => {
+      const node = nodeMap.get(h.nodeId);
+      if (!node) return [];
+      return [{ node, score: h.score }];
+    });
+  }
+
+  /**
+   * Find symbols semantically similar to a given node.
+   *
+   * Embeds the source node's document and searches for nearest neighbors,
+   * excluding the source node from results.
+   *
+   * @param nodeId - ID of the source node
+   * @param limit - Maximum results to return
+   */
+  async findSimilar(nodeId: string, limit = 10): Promise<SearchResult[]> {
+    if (!this.vectorIndex || !this.embedder) return [];
+    const node = this.queries.getNodeById(nodeId);
+    if (!node) return [];
+    const doc = buildEmbeddingDocument(node);
+    const queryVec = await this.embedder.embed(doc);
+    const hits = await this.vectorIndex.search(queryVec, limit + 1);
+    const filtered = hits.filter(h => h.nodeId !== nodeId).slice(0, limit);
+    const ids = filtered.map(h => h.nodeId);
+    const nodeMap = new Map(
+      this.queries.getNodesByIds(ids).map(n => [n.id, n])
+    );
+    return filtered.flatMap(h => {
+      const n = nodeMap.get(h.nodeId);
+      if (!n) return [];
+      return [{ node: n, score: h.score }];
+    });
+  }
+
+  /**
+   * Get vector index sync statistics.
+   */
+  getVectorStats(): { enabled: boolean; total: number; synced: number; pending: number } {
+    if (!this.config.vector?.enabled) {
+      return { enabled: false, total: 0, synced: 0, pending: 0 };
+    }
+    const stats = this.queries.getVectorSyncStats();
+    return { enabled: true, ...stats };
+  }
+
+  // ===========================================================================
   // Database Management
   // ===========================================================================
 
@@ -959,10 +1116,10 @@ export class CodeGraph {
   }
 
   /**
-   * Completely remove CodeGraph from the project.
-   * This closes the database and deletes the .CodeGraph directory.
+   * Completely remove CodeMind from the project.
+   * This closes the database and deletes the .CodeMind directory.
    *
-   * WARNING: This permanently deletes all CodeGraph data for the project.
+   * WARNING: This permanently deletes all CodeMind data for the project.
    */
   uninitialize(): void {
     this.close();
@@ -971,4 +1128,4 @@ export class CodeGraph {
 }
 
 // Default export
-export default CodeGraph;
+export default CodeMind;

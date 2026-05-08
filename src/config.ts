@@ -1,13 +1,13 @@
 /**
  * Configuration Management
  *
- * Load, save, and validate CodeGraph configuration.
+ * Load, save, and validate CodeMind configuration.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import picomatch from 'picomatch';
-import { CodeGraphConfig, DEFAULT_CONFIG, Language, NodeKind } from './types';
+import { CodeMindConfig, DEFAULT_CONFIG, Language, NodeKind, VectorConfig } from './types';
 import { normalizePath } from './utils';
 
 /**
@@ -19,7 +19,7 @@ export const CONFIG_FILENAME = 'config.json';
  * Get the config file path for a project
  */
 export function getConfigPath(projectRoot: string): string {
-  return path.join(projectRoot, '.codegraph', CONFIG_FILENAME);
+  return path.join(projectRoot, '.codemind', CONFIG_FILENAME);
 }
 
 /**
@@ -50,7 +50,7 @@ function isSafeRegex(pattern: string): boolean {
 /**
  * Validate a configuration object
  */
-export function validateConfig(config: unknown): config is CodeGraphConfig {
+export function validateConfig(config: unknown): config is CodeMindConfig {
   if (typeof config !== 'object' || config === null) {
     return false;
   }
@@ -107,6 +107,32 @@ export function validateConfig(config: unknown): config is CodeGraphConfig {
     }
   }
 
+  // Validate optional vector config
+  if (c.vector !== undefined) {
+    if (!validateVectorConfig(c.vector)) return false;
+  }
+
+  return true;
+}
+
+const VALID_QUANTIZATIONS = new Set<VectorConfig['quantization']>(['none', 'scalar', 'product', 'binary']);
+
+function validateVectorConfig(v: unknown): v is VectorConfig {
+  if (typeof v !== 'object' || v === null) return false;
+  const cfg = v as Record<string, unknown>;
+  if (typeof cfg.enabled !== 'boolean') return false;
+  if (typeof cfg.model !== 'string') return false;
+  if (typeof cfg.dimensions !== 'number' || cfg.dimensions <= 0) return false;
+  if (typeof cfg.storagePath !== 'string') return false;
+  if (typeof cfg.hnswM !== 'number') return false;
+  if (typeof cfg.efConstruction !== 'number') return false;
+  if (typeof cfg.efSearch !== 'number') return false;
+  if (typeof cfg.quantization !== 'string' || !VALID_QUANTIZATIONS.has(cfg.quantization as VectorConfig['quantization'])) return false;
+  if (typeof cfg.batchSize !== 'number' || cfg.batchSize <= 0) return false;
+  if (typeof cfg.indexOnSync !== 'boolean') return false;
+  if (typeof cfg.hybridWeights !== 'object' || cfg.hybridWeights === null) return false;
+  const hw = cfg.hybridWeights as Record<string, unknown>;
+  if (typeof hw.fts !== 'number' || typeof hw.vector !== 'number') return false;
   return true;
 }
 
@@ -114,9 +140,9 @@ export function validateConfig(config: unknown): config is CodeGraphConfig {
  * Merge configuration with defaults
  */
 function mergeConfig(
-  defaults: CodeGraphConfig,
-  overrides: Partial<CodeGraphConfig>
-): CodeGraphConfig {
+  defaults: CodeMindConfig,
+  overrides: Partial<CodeMindConfig>
+): CodeMindConfig {
   return {
     version: overrides.version ?? defaults.version,
     rootDir: overrides.rootDir ?? defaults.rootDir,
@@ -128,13 +154,14 @@ function mergeConfig(
     extractDocstrings: overrides.extractDocstrings ?? defaults.extractDocstrings,
     trackCallSites: overrides.trackCallSites ?? defaults.trackCallSites,
     customPatterns: overrides.customPatterns ?? defaults.customPatterns,
+    vector: overrides.vector ?? defaults.vector,
   };
 }
 
 /**
  * Load configuration from a project
  */
-export function loadConfig(projectRoot: string): CodeGraphConfig {
+export function loadConfig(projectRoot: string): CodeMindConfig {
   const configPath = getConfigPath(projectRoot);
 
   if (!fs.existsSync(configPath)) {
@@ -150,7 +177,7 @@ export function loadConfig(projectRoot: string): CodeGraphConfig {
     const parsed = JSON.parse(content) as unknown;
 
     // Merge with defaults to ensure all fields are present
-    const merged = mergeConfig(DEFAULT_CONFIG, parsed as Partial<CodeGraphConfig>);
+    const merged = mergeConfig(DEFAULT_CONFIG, parsed as Partial<CodeMindConfig>);
     merged.rootDir = projectRoot; // Always use actual project root
 
     if (!validateConfig(merged)) {
@@ -169,7 +196,7 @@ export function loadConfig(projectRoot: string): CodeGraphConfig {
 /**
  * Save configuration to a project
  */
-export function saveConfig(projectRoot: string, config: CodeGraphConfig): void {
+export function saveConfig(projectRoot: string, config: CodeMindConfig): void {
   const configPath = getConfigPath(projectRoot);
   const dir = path.dirname(configPath);
 
@@ -180,7 +207,7 @@ export function saveConfig(projectRoot: string, config: CodeGraphConfig): void {
 
   // Create a copy without rootDir (it's always derived from project path)
   const toSave = { ...config };
-  delete (toSave as Partial<CodeGraphConfig>).rootDir;
+  delete (toSave as Partial<CodeMindConfig>).rootDir;
 
   const content = JSON.stringify(toSave, null, 2);
 
@@ -193,7 +220,7 @@ export function saveConfig(projectRoot: string, config: CodeGraphConfig): void {
 /**
  * Create default configuration for a new project
  */
-export function createDefaultConfig(projectRoot: string): CodeGraphConfig {
+export function createDefaultConfig(projectRoot: string): CodeMindConfig {
   return {
     ...DEFAULT_CONFIG,
     rootDir: projectRoot,
@@ -205,8 +232,8 @@ export function createDefaultConfig(projectRoot: string): CodeGraphConfig {
  */
 export function updateConfig(
   projectRoot: string,
-  updates: Partial<CodeGraphConfig>
-): CodeGraphConfig {
+  updates: Partial<CodeMindConfig>
+): CodeMindConfig {
   const current = loadConfig(projectRoot);
   const updated = mergeConfig(current, updates);
   updated.rootDir = projectRoot;
@@ -217,7 +244,7 @@ export function updateConfig(
 /**
  * Add patterns to include list
  */
-export function addIncludePatterns(projectRoot: string, patterns: string[]): CodeGraphConfig {
+export function addIncludePatterns(projectRoot: string, patterns: string[]): CodeMindConfig {
   const config = loadConfig(projectRoot);
   const newPatterns = patterns.filter((p) => !config.include.includes(p));
   config.include = [...config.include, ...newPatterns];
@@ -228,7 +255,7 @@ export function addIncludePatterns(projectRoot: string, patterns: string[]): Cod
 /**
  * Add patterns to exclude list
  */
-export function addExcludePatterns(projectRoot: string, patterns: string[]): CodeGraphConfig {
+export function addExcludePatterns(projectRoot: string, patterns: string[]): CodeMindConfig {
   const config = loadConfig(projectRoot);
   const newPatterns = patterns.filter((p) => !config.exclude.includes(p));
   config.exclude = [...config.exclude, ...newPatterns];
@@ -244,7 +271,7 @@ export function addCustomPattern(
   name: string,
   pattern: string,
   kind: NodeKind
-): CodeGraphConfig {
+): CodeMindConfig {
   const config = loadConfig(projectRoot);
 
   if (!config.customPatterns) {
@@ -267,7 +294,7 @@ export function addCustomPattern(
 /**
  * Check if a file path matches the include/exclude patterns
  */
-export function shouldIncludeFile(filePath: string, config: CodeGraphConfig): boolean {
+export function shouldIncludeFile(filePath: string, config: CodeMindConfig): boolean {
   // Normalize to forward slashes so Windows backslash paths match glob patterns
   filePath = normalizePath(filePath);
 

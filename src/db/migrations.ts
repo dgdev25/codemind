@@ -9,7 +9,7 @@ import { SqliteDatabase } from './sqlite-adapter';
 /**
  * Current schema version
  */
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /**
  * Migration definition
@@ -62,6 +62,21 @@ const migrations: Migration[] = [
       db.exec(`
         DROP INDEX IF EXISTS idx_edges_source;
         DROP INDEX IF EXISTS idx_edges_target;
+      `);
+    },
+  },
+  {
+    version: 5,
+    description: 'Add vector_sync table for RuVector embedding sync state tracking',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS vector_sync (
+          node_id      TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+          vector_id    TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          embedded_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_vector_sync_embedded_at ON vector_sync(embedded_at);
       `);
     },
   },

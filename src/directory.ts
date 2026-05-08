@@ -1,48 +1,48 @@
 /**
  * Directory Management
  *
- * Manages the .codegraph/ directory structure for CodeGraph data.
+ * Manages the .codemind/ directory structure for CodeMind data.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * CodeGraph directory name
+ * CodeMind directory name
  */
-export const CODEGRAPH_DIR = '.codegraph';
+export const CODEMIND_DIR = '.codemind';
 
 /**
- * Get the .codegraph directory path for a project
+ * Get the .codemind directory path for a project
  */
-export function getCodeGraphDir(projectRoot: string): string {
-  return path.join(projectRoot, CODEGRAPH_DIR);
+export function getCodeMindDir(projectRoot: string): string {
+  return path.join(projectRoot, CODEMIND_DIR);
 }
 
 /**
- * Check if a project has been initialized with CodeGraph
- * Requires both .codegraph/ directory AND codegraph.db to exist
+ * Check if a project has been initialized with CodeMind
+ * Requires both .codemind/ directory AND codemind.db to exist
  */
 export function isInitialized(projectRoot: string): boolean {
-  const codegraphDir = getCodeGraphDir(projectRoot);
-  if (!fs.existsSync(codegraphDir) || !fs.statSync(codegraphDir).isDirectory()) {
+  const codemindDir = getCodeMindDir(projectRoot);
+  if (!fs.existsSync(codemindDir) || !fs.statSync(codemindDir).isDirectory()) {
     return false;
   }
-  // Must have codegraph.db, not just .codegraph folder
-  const dbPath = path.join(codegraphDir, 'codegraph.db');
+  // Must have codemind.db, not just .codemind folder
+  const dbPath = path.join(codemindDir, 'codemind.db');
   return fs.existsSync(dbPath);
 }
 
 /**
- * Find the nearest parent directory containing .codegraph/
+ * Find the nearest parent directory containing .codemind/
  *
- * Walks up from the given path to find a CodeGraph-initialized project,
+ * Walks up from the given path to find a CodeMind-initialized project,
  * similar to how git finds .git/ directories.
  *
  * @param startPath - Directory to start searching from
- * @returns The project root containing .codegraph/, or null if not found
+ * @returns The project root containing .codemind/, or null if not found
  */
-export function findNearestCodeGraphRoot(startPath: string): string | null {
+export function findNearestCodeMindRoot(startPath: string): string | null {
   let current = path.resolve(startPath);
   const root = path.parse(current).root;
 
@@ -64,26 +64,26 @@ export function findNearestCodeGraphRoot(startPath: string): string | null {
 }
 
 /**
- * Create the .codegraph directory structure
- * Note: Only throws if codegraph.db already exists, not just if .codegraph/ exists.
+ * Create the .codemind directory structure
+ * Note: Only throws if codemind.db already exists, not just if .codemind/ exists.
  */
 export function createDirectory(projectRoot: string): void {
-  const codegraphDir = getCodeGraphDir(projectRoot);
-  const dbPath = path.join(codegraphDir, 'codegraph.db');
+  const codemindDir = getCodeMindDir(projectRoot);
+  const dbPath = path.join(codemindDir, 'codemind.db');
 
-  // Only throw if CodeGraph is actually initialized (db exists)
-  // .codegraph/ folder alone is fine
+  // Only throw if CodeMind is actually initialized (db exists)
+  // .codemind/ folder alone is fine
   if (fs.existsSync(dbPath)) {
-    throw new Error(`CodeGraph already initialized in ${projectRoot}`);
+    throw new Error(`CodeMind already initialized in ${projectRoot}`);
   }
 
   // Create main directory (if it doesn't exist)
-  fs.mkdirSync(codegraphDir, { recursive: true });
+  fs.mkdirSync(codemindDir, { recursive: true });
 
-  // Create .gitignore inside .codegraph (if it doesn't exist)
-  const gitignorePath = path.join(codegraphDir, '.gitignore');
+  // Create .gitignore inside .codemind (if it doesn't exist)
+  const gitignorePath = path.join(codemindDir, '.gitignore');
   if (!fs.existsSync(gitignorePath)) {
-    const gitignoreContent = `# CodeGraph data files
+    const gitignoreContent = `# CodeMind data files
 # These are local to each machine and should not be committed
 
 # Database
@@ -106,40 +106,40 @@ cache/
 }
 
 /**
- * Remove the .codegraph directory
+ * Remove the .codemind directory
  */
 export function removeDirectory(projectRoot: string): void {
-  const codegraphDir = getCodeGraphDir(projectRoot);
+  const codemindDir = getCodeMindDir(projectRoot);
 
-  if (!fs.existsSync(codegraphDir)) {
+  if (!fs.existsSync(codemindDir)) {
     return;
   }
 
-  // Verify .codegraph is a real directory, not a symlink pointing elsewhere
-  const lstat = fs.lstatSync(codegraphDir);
+  // Verify .codemind is a real directory, not a symlink pointing elsewhere
+  const lstat = fs.lstatSync(codemindDir);
   if (lstat.isSymbolicLink()) {
     // Only remove the symlink itself, never follow it for recursive delete
-    fs.unlinkSync(codegraphDir);
+    fs.unlinkSync(codemindDir);
     return;
   }
 
   if (!lstat.isDirectory()) {
     // Not a directory - remove the single file
-    fs.unlinkSync(codegraphDir);
+    fs.unlinkSync(codemindDir);
     return;
   }
 
   // Recursively remove directory
-  fs.rmSync(codegraphDir, { recursive: true, force: true });
+  fs.rmSync(codemindDir, { recursive: true, force: true });
 }
 
 /**
- * Get all files in the .codegraph directory
+ * Get all files in the .codemind directory
  */
 export function listDirectoryContents(projectRoot: string): string[] {
-  const codegraphDir = getCodeGraphDir(projectRoot);
+  const codemindDir = getCodeMindDir(projectRoot);
 
-  if (!fs.existsSync(codegraphDir)) {
+  if (!fs.existsSync(codemindDir)) {
     return [];
   }
 
@@ -151,7 +151,7 @@ export function listDirectoryContents(projectRoot: string): string[] {
     for (const entry of entries) {
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
 
-      // Skip symlinks to prevent following links outside .codegraph
+      // Skip symlinks to prevent following links outside .codemind
       if (entry.isSymbolicLink()) {
         continue;
       }
@@ -164,17 +164,17 @@ export function listDirectoryContents(projectRoot: string): string[] {
     }
   }
 
-  walkDir(codegraphDir);
+  walkDir(codemindDir);
   return files;
 }
 
 /**
- * Get the total size of the .codegraph directory in bytes
+ * Get the total size of the .codemind directory in bytes
  */
 export function getDirectorySize(projectRoot: string): number {
-  const codegraphDir = getCodeGraphDir(projectRoot);
+  const codemindDir = getCodeMindDir(projectRoot);
 
-  if (!fs.existsSync(codegraphDir)) {
+  if (!fs.existsSync(codemindDir)) {
     return 0;
   }
 
@@ -184,7 +184,7 @@ export function getDirectorySize(projectRoot: string): number {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
 
     for (const entry of entries) {
-      // Skip symlinks to prevent following links outside .codegraph
+      // Skip symlinks to prevent following links outside .codemind
       if (entry.isSymbolicLink()) {
         continue;
       }
@@ -200,19 +200,19 @@ export function getDirectorySize(projectRoot: string): number {
     }
   }
 
-  walkDir(codegraphDir);
+  walkDir(codemindDir);
   return totalSize;
 }
 
 /**
- * Ensure a subdirectory exists within .codegraph
+ * Ensure a subdirectory exists within .codemind
  */
 export function ensureSubdirectory(projectRoot: string, subdirName: string): string {
   if (subdirName.includes('..') || subdirName.includes(path.sep) || subdirName.includes('/')) {
     throw new Error(`Invalid subdirectory name: ${subdirName}`);
   }
 
-  const subdirPath = path.join(getCodeGraphDir(projectRoot), subdirName);
+  const subdirPath = path.join(getCodeMindDir(projectRoot), subdirName);
 
   if (!fs.existsSync(subdirPath)) {
     fs.mkdirSync(subdirPath, { recursive: true });
@@ -222,34 +222,34 @@ export function ensureSubdirectory(projectRoot: string, subdirName: string): str
 }
 
 /**
- * Check if the .codegraph directory has valid structure
+ * Check if the .codemind directory has valid structure
  */
 export function validateDirectory(projectRoot: string): {
   valid: boolean;
   errors: string[];
 } {
   const errors: string[] = [];
-  const codegraphDir = getCodeGraphDir(projectRoot);
+  const codemindDir = getCodeMindDir(projectRoot);
 
-  if (!fs.existsSync(codegraphDir)) {
-    errors.push('CodeGraph directory does not exist');
+  if (!fs.existsSync(codemindDir)) {
+    errors.push('CodeMind directory does not exist');
     return { valid: false, errors };
   }
 
-  if (!fs.statSync(codegraphDir).isDirectory()) {
-    errors.push('.codegraph exists but is not a directory');
+  if (!fs.statSync(codemindDir).isDirectory()) {
+    errors.push('.codemind exists but is not a directory');
     return { valid: false, errors };
   }
 
   // Auto-repair missing .gitignore (non-critical file)
-  const gitignorePath = path.join(codegraphDir, '.gitignore');
+  const gitignorePath = path.join(codemindDir, '.gitignore');
   if (!fs.existsSync(gitignorePath)) {
     try {
-      const gitignoreContent = `# CodeGraph data files\n# These are local to each machine and should not be committed\n\n# Database\n*.db\n*.db-wal\n*.db-shm\n\n# Cache\ncache/\n\n# Logs\n*.log\n\n# Hook markers\n.dirty\n`;
+      const gitignoreContent = `# CodeMind data files\n# These are local to each machine and should not be committed\n\n# Database\n*.db\n*.db-wal\n*.db-shm\n\n# Cache\ncache/\n\n# Logs\n*.log\n\n# Hook markers\n.dirty\n`;
       fs.writeFileSync(gitignorePath, gitignoreContent, 'utf-8');
     } catch {
       // Non-fatal: warn but don't block
-      errors.push('.gitignore missing in .codegraph directory and could not be created');
+      errors.push('.gitignore missing in .codemind directory and could not be created');
     }
   }
 

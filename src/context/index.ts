@@ -26,6 +26,7 @@ import { formatContextAsMarkdown, formatContextAsJson } from './formatter';
 import { logDebug } from '../errors';
 import { validatePathWithinRoot } from '../utils';
 import { isTestFile, extractSearchTerms, scorePathRelevance, getStemVariants } from '../search/query-utils';
+import { VectorIndex, Embedder, reciprocalRankFusion } from '../vector';
 
 /**
  * Extract likely symbol names from a natural language query
@@ -182,15 +183,29 @@ export class ContextBuilder {
   private projectRoot: string;
   private queries: QueryBuilder;
   private traverser: GraphTraverser;
+  private vectorIndex: VectorIndex | null;
+  private embedder: Embedder | null;
 
   constructor(
     projectRoot: string,
     queries: QueryBuilder,
-    traverser: GraphTraverser
+    traverser: GraphTraverser,
+    vectorIndex: VectorIndex | null = null,
+    embedder: Embedder | null = null,
   ) {
     this.projectRoot = projectRoot;
     this.queries = queries;
     this.traverser = traverser;
+    this.vectorIndex = vectorIndex;
+    this.embedder = embedder;
+  }
+
+  /**
+   * Wire in vector components after construction (called when vector index is ready)
+   */
+  setVectorComponents(vectorIndex: VectorIndex | null, embedder: Embedder | null): void {
+    this.vectorIndex = vectorIndex;
+    this.embedder = embedder;
   }
 
   /**
@@ -685,6 +700,36 @@ export class ContextBuilder {
     searchResults.sort((a, b) => b.score - a.score);
     searchResults = searchResults.slice(0, opts.searchLimit * 3);
 
+    // Vector lane — runs when index is available
+    if (this.vectorIndex && this.embedder) {
+      try {
+        const queryVec = await this.embedder.embed(query);
+        const vecResults = await this.vectorIndex.searchFiltered(
+          queryVec,
+          { kind: opts.nodeKinds?.length ? opts.nodeKinds : undefined },
+          opts.searchLimit * 4,
+        );
+
+        // Hydrate any vector-only nodes not already in searchResults
+        const knownIds = new Set(searchResults.map(r => r.node.id));
+        const missingIds = vecResults.filter(r => !knownIds.has(r.nodeId)).map(r => r.nodeId);
+
+        // Build unified node map for RRF
+        const nodeMap = new Map<string, Node>(searchResults.map(r => [r.node.id, r.node]));
+        if (missingIds.length > 0) {
+          const extra = this.queries.getNodesByIds(missingIds);
+          for (const node of extra) nodeMap.set(node.id, node);
+        }
+
+        const fused = reciprocalRankFusion(searchResults, vecResults, nodeMap, 1.0, 1.0);
+
+        // Replace searchResults with fused results, preserving SearchResult shape
+        searchResults = fused.map(r => ({ node: r.node, score: r.score }));
+      } catch {
+        // Vector search failed — fall through to FTS-only results
+      }
+    }
+
     // Filter by minimum score
     let filteredResults = searchResults.filter((r) => r.score >= opts.minScore);
 
@@ -1123,9 +1168,11 @@ export class ContextBuilder {
 export function createContextBuilder(
   projectRoot: string,
   queries: QueryBuilder,
-  traverser: GraphTraverser
+  traverser: GraphTraverser,
+  vectorIndex: VectorIndex | null = null,
+  embedder: Embedder | null = null,
 ): ContextBuilder {
-  return new ContextBuilder(projectRoot, queries, traverser);
+  return new ContextBuilder(projectRoot, queries, traverser, vectorIndex, embedder);
 }
 
 // Re-export formatter

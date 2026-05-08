@@ -1,5 +1,5 @@
 /**
- * CodeGraph Type Definitions
+ * CodeMind Type Definitions
  *
  * Core types for the semantic knowledge graph system.
  */
@@ -448,9 +448,26 @@ export interface FrameworkHint {
 }
 
 /**
- * Configuration for a CodeGraph project
+ * Vector search configuration
  */
-export interface CodeGraphConfig {
+export interface VectorConfig {
+  enabled: boolean;
+  model: string;
+  dimensions: number;
+  storagePath: string;
+  hnswM: number;
+  efConstruction: number;
+  efSearch: number;
+  quantization: 'none' | 'scalar' | 'product' | 'binary';
+  hybridWeights: { fts: number; vector: number };
+  batchSize: number;
+  indexOnSync: boolean;
+}
+
+/**
+ * Configuration for a CodeMind project
+ */
+export interface CodeMindConfig {
   /** Schema version for migrations */
   version: number;
 
@@ -487,12 +504,15 @@ export interface CodeGraphConfig {
     /** Node kind to assign */
     kind: NodeKind;
   }[];
+
+  /** Vector search configuration (optional — zero overhead when absent) */
+  vector?: VectorConfig;
 }
 
 /**
  * Default configuration values
  */
-export const DEFAULT_CONFIG: CodeGraphConfig = {
+export const DEFAULT_CONFIG: CodeMindConfig = {
   version: 1,
   rootDir: '.',
   include: [

@@ -82,8 +82,8 @@ export class VectorIndex {
     quantization?: string;
   } = {}): Promise<void> {
     if (this.db) return;
-    const mod = await importESM('@ruvector/node') as { VectorDB: new (opts: object) => RuVectorDB };
-    this.db = new mod.VectorDB({
+    const mod = await importESM('@ruvector/core') as { default: { VectorDb: new (opts: object) => RuVectorDB } };
+    this.db = new mod.default.VectorDb({
       dimensions: DIMENSIONS,
       distanceMetric: 'Cosine',
       storagePath: this.storagePath,

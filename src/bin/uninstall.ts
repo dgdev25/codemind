@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * CodeGraph preuninstall cleanup script
+ * CodeMind preuninstall cleanup script
  *
- * Runs automatically when `npm uninstall -g @colbymchenry/codegraph` is called.
- * Removes all CodeGraph configuration from Claude Code:
+ * Runs automatically when `npm uninstall -g @colbymchenry/codemind` is called.
+ * Removes all CodeMind configuration from Claude Code:
  *   - MCP server entry from ~/.claude.json
  *   - Permissions from ~/.claude/settings.json
- *   - CodeGraph section from ~/.claude/CLAUDE.md
+ *   - CodeMind section from ~/.claude/CLAUDE.md
  *
  * This script must never throw — a failed cleanup must not block uninstall.
  */
@@ -15,8 +15,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-const CODEGRAPH_SECTION_START = '<!-- CODEGRAPH_START -->';
-const CODEGRAPH_SECTION_END = '<!-- CODEGRAPH_END -->';
+const CODEMIND_SECTION_START = '<!-- CODEMIND_START -->';
+const CODEMIND_SECTION_END = '<!-- CODEMIND_END -->';
 
 function readJson(filePath: string): Record<string, any> | null {
   try {
@@ -32,14 +32,14 @@ function writeJson(filePath: string, data: Record<string, any>): void {
 }
 
 /**
- * Remove CodeGraph MCP server from ~/.claude.json
+ * Remove CodeMind MCP server from ~/.claude.json
  */
 function removeMcpConfig(): void {
   const filePath = path.join(os.homedir(), '.claude.json');
   const config = readJson(filePath);
-  if (!config?.mcpServers?.codegraph) return;
+  if (!config?.mcpServers?.codemind) return;
 
-  delete config.mcpServers.codegraph;
+  delete config.mcpServers.codemind;
 
   // Clean up empty mcpServers object
   if (Object.keys(config.mcpServers).length === 0) {
@@ -50,18 +50,18 @@ function removeMcpConfig(): void {
 }
 
 /**
- * Remove CodeGraph permissions from ~/.claude/settings.json
+ * Remove CodeMind permissions from ~/.claude/settings.json
  */
 function removeSettings(): void {
   const filePath = path.join(os.homedir(), '.claude', 'settings.json');
   const settings = readJson(filePath);
   if (!settings) return;
 
-  // Remove codegraph permissions
+  // Remove codemind permissions
   if (Array.isArray(settings.permissions?.allow)) {
     const before = settings.permissions.allow.length;
     settings.permissions.allow = settings.permissions.allow.filter(
-      (p: string) => !p.startsWith('mcp__codegraph__')
+      (p: string) => !p.startsWith('mcp__codemind__')
     );
     if (settings.permissions.allow.length === before) return;
 
@@ -79,7 +79,7 @@ function removeSettings(): void {
 }
 
 /**
- * Remove CodeGraph section from ~/.claude/CLAUDE.md
+ * Remove CodeMind section from ~/.claude/CLAUDE.md
  */
 function removeClaudeMd(): void {
   const filePath = path.join(os.homedir(), '.claude', 'CLAUDE.md');
@@ -88,12 +88,12 @@ function removeClaudeMd(): void {
     let content = fs.readFileSync(filePath, 'utf-8');
 
     // Remove marked section
-    const startIdx = content.indexOf(CODEGRAPH_SECTION_START);
-    const endIdx = content.indexOf(CODEGRAPH_SECTION_END);
+    const startIdx = content.indexOf(CODEMIND_SECTION_START);
+    const endIdx = content.indexOf(CODEMIND_SECTION_END);
 
     if (startIdx !== -1 && endIdx > startIdx) {
       const before = content.substring(0, startIdx).trimEnd();
-      const after = content.substring(endIdx + CODEGRAPH_SECTION_END.length).trimStart();
+      const after = content.substring(endIdx + CODEMIND_SECTION_END.length).trimStart();
       content = before + (before && after ? '\n\n' : '') + after;
 
       if (content.trim() === '') {

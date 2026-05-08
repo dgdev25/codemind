@@ -214,7 +214,7 @@ export class QueryBuilder {
 
     // Validate required fields to prevent SQLite bind errors
     if (!node.id || !node.kind || !node.name || !node.filePath || !node.language) {
-      console.error('[CodeGraph] Skipping node with missing required fields:', {
+      console.error('[CodeMind] Skipping node with missing required fields:', {
         id: node.id,
         kind: node.kind,
         name: node.name,
@@ -298,7 +298,7 @@ export class QueryBuilder {
 
     // Validate required fields
     if (!node.id || !node.kind || !node.name || !node.filePath || !node.language) {
-      console.error('[CodeGraph] Skipping node update with missing required fields:', node.id);
+      console.error('[CodeMind] Skipping node update with missing required fields:', node.id);
       return;
     }
 
@@ -378,6 +378,21 @@ export class QueryBuilder {
     const node = rowToNode(row);
     this.cacheNode(node);
     return node;
+  }
+
+  /**
+   * Get multiple nodes by their IDs in a single query.
+   * Uses JSON array to avoid N+1 queries when hydrating vector search results.
+   *
+   * Time Complexity: O(n) where n = ids.length
+   */
+  getNodesByIds(ids: string[]): Node[] {
+    if (ids.length === 0) return [];
+    const idsJson = JSON.stringify(ids);
+    const rows = this.db.prepare(
+      `SELECT * FROM nodes WHERE id IN (SELECT value FROM json_each(?))`
+    ).all(idsJson) as NodeRow[];
+    return rows.map(rowToNode);
   }
 
   /**
@@ -1444,5 +1459,49 @@ export class QueryBuilder {
       this.db.exec('DELETE FROM nodes');
       this.db.exec('DELETE FROM files');
     })();
+  }
+
+  // ===========================================================================
+  // Vector Sync Operations
+  // ===========================================================================
+
+  /**
+   * Returns nodes that have never been embedded or whose content has changed
+   * since their last embedding (detected via updated_at vs embedded_at).
+   */
+  getNodesForVectorSync(): Node[] {
+    const rows = this.db.prepare(`
+      SELECT n.*
+      FROM nodes n
+      LEFT JOIN vector_sync vs ON vs.node_id = n.id
+      WHERE vs.node_id IS NULL
+         OR n.updated_at > vs.embedded_at
+         OR vs.content_hash IS NULL
+      ORDER BY n.updated_at DESC
+    `).all() as NodeRow[];
+    return rows.map(rowToNode);
+  }
+
+  /**
+   * Insert or update a vector_sync record for a node.
+   */
+  upsertVectorSync(nodeId: string, vectorId: string, hash: string): void {
+    this.db.prepare(`
+      INSERT INTO vector_sync (node_id, vector_id, content_hash, embedded_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET
+        vector_id    = excluded.vector_id,
+        content_hash = excluded.content_hash,
+        embedded_at  = excluded.embedded_at
+    `).run(nodeId, vectorId, hash, Date.now());
+  }
+
+  /**
+   * Returns aggregate counts for monitoring vector sync health.
+   */
+  getVectorSyncStats(): { total: number; synced: number; pending: number } {
+    const total  = (this.db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
+    const synced = (this.db.prepare('SELECT COUNT(*) as c FROM vector_sync').get() as { c: number }).c;
+    return { total, synced, pending: total - synced };
   }
 }

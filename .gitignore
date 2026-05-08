@@ -40,8 +40,18 @@ npm-debug.log*
 # Local Claude settings
 .claude/settings.local.json
 
-# CodeGraph data directories (in test projects)
+# CodeGraph/CodeMind data directories (in test projects)
 .codegraph/
+.codemind/
+
+# Swarm coordination state
+.swarm/
+
+# RuVector local database
+ruvector.db
+
+# Claude Code session data
+.claude/
 
 test_frameworks
 
