@@ -9,8 +9,14 @@ interface RuVectorDB {
 }
 
 // tsc (CJS mode) rewrites import() to require(), which breaks ESM-only packages.
+// The specifier is validated against an allowlist before use.
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
-const importESM = new Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+const _dynamicImport = new Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+const ESM_ALLOWLIST = new Set(['@ruvector/core']);
+function importESM(specifier: string): Promise<unknown> {
+  if (!ESM_ALLOWLIST.has(specifier)) throw new Error(`Blocked ESM import: ${specifier}`);
+  return _dynamicImport(specifier);
+}
 
 export interface VectorSearchResult {
   nodeId: string;
@@ -69,6 +75,7 @@ function hitToResult(hit: RuVectorHit): VectorSearchResult | null {
 
 export class VectorIndex {
   private db: RuVectorDB | null = null;
+  private initPromise: Promise<void> | null = null;
   private readonly storagePath: string;
 
   constructor(storagePath: string) {
@@ -81,6 +88,23 @@ export class VectorIndex {
     efSearch?: number;
     quantization?: string;
   } = {}): Promise<void> {
+    if (this.db) return;
+    // Prevent concurrent init calls from each creating a separate DB instance
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this._init(config);
+    try {
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
+    }
+  }
+
+  private async _init(config: {
+    hnswM?: number;
+    efConstruction?: number;
+    efSearch?: number;
+    quantization?: string;
+  }): Promise<void> {
     if (this.db) return;
     const mod = await importESM('@ruvector/core') as { default: { VectorDb: new (opts: object) => RuVectorDB } };
     this.db = new mod.default.VectorDb({

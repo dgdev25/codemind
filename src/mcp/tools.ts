@@ -7,7 +7,7 @@
 import CodeMind, { findNearestCodeMindRoot } from '../index';
 import type { Node, Edge, SearchResult, Subgraph, TaskContext, NodeKind } from '../types';
 import { createHash } from 'crypto';
-import { writeFileSync, readFileSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { clamp, validatePathWithinRoot } from '../utils';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -35,8 +35,11 @@ export function getExploreBudget(fileCount: number): number {
 function markSessionConsulted(sessionId: string): void {
   try {
     const hash = createHash('sha256').update(sessionId).digest('hex').slice(0, 16);
-    const markerPath = join(tmpdir(), `codemind-consulted-${hash}`);
-    writeFileSync(markerPath, new Date().toISOString(), 'utf8');
+    // Use a private subdirectory so the marker name is not guessable from the hash alone
+    const markerDir = join(tmpdir(), 'codemind-sessions');
+    mkdirSync(markerDir, { recursive: true, mode: 0o700 });
+    const markerPath = join(markerDir, hash);
+    writeFileSync(markerPath, new Date().toISOString(), { encoding: 'utf8', mode: 0o600 });
   } catch {
     // Silently fail - don't break MCP on marker write failure
   }
@@ -434,9 +437,12 @@ export class ToolHandler {
   /**
    * Validate that a value is a non-empty string
    */
-  private validateString(value: unknown, name: string): string | ToolResult {
+  private validateString(value: unknown, name: string, maxLength = 2000): string | ToolResult {
     if (typeof value !== 'string' || value.length === 0) {
       return this.errorResult(`${name} must be a non-empty string`);
+    }
+    if (value.length > maxLength) {
+      return this.errorResult(`${name} exceeds maximum length of ${maxLength} characters`);
     }
     return value;
   }

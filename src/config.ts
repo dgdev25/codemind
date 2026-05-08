@@ -38,6 +38,13 @@ function isSafeRegex(pattern: string): boolean {
   if (/([+*}])\s*[+*{]/.test(pattern)) return false;
   if (/\([^)]*[+*][^)]*\)[+*{]/.test(pattern)) return false;
 
+  // Reject alternation inside quantified groups: (a|b)+ style patterns
+  // These can cause exponential backtracking on non-matching inputs
+  if (/\([^)]*\|[^)]*\)[+*{?]/.test(pattern)) return false;
+
+  // Reject backreferences inside quantified groups (e.g. (\1)+)
+  if (/\(.*\\[0-9].*\)[+*{?]/.test(pattern)) return false;
+
   // Verify the pattern is a valid regex
   try {
     new RegExp(pattern);
@@ -64,7 +71,7 @@ export function validateConfig(config: unknown): config is CodeMindConfig {
   if (!Array.isArray(c.exclude)) return false;
   if (!Array.isArray(c.languages)) return false;
   if (!Array.isArray(c.frameworks)) return false;
-  if (typeof c.maxFileSize !== 'number') return false;
+  if (typeof c.maxFileSize !== 'number' || c.maxFileSize <= 0 || c.maxFileSize > 100 * 1024 * 1024) return false;
   if (typeof c.extractDocstrings !== 'boolean') return false;
   if (typeof c.trackCallSites !== 'boolean') return false;
 

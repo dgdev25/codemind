@@ -153,11 +153,43 @@ class WasmDatabaseAdapter implements SqliteDatabase {
         return;
       }
 
+      // Whitelist allowed write pragmas and their value patterns to prevent injection
+      const ALLOWED_WRITE_PRAGMAS: Record<string, RegExp> = {
+        journal_mode:         /^(DELETE|TRUNCATE|PERSIST|MEMORY|OFF|WAL)$/i,
+        synchronous:          /^(OFF|NORMAL|FULL|EXTRA|0|1|2|3)$/i,
+        cache_size:           /^-?\d+$/,
+        page_size:            /^\d+$/,
+        foreign_keys:         /^(ON|OFF|0|1)$/i,
+        temp_store:           /^(DEFAULT|FILE|MEMORY|0|1|2)$/i,
+        auto_vacuum:          /^(NONE|FULL|INCREMENTAL|0|1|2)$/i,
+        locking_mode:         /^(NORMAL|EXCLUSIVE)$/i,
+        wal_autocheckpoint:   /^\d+$/,
+        busy_timeout:         /^\d+$/,
+        mmap_size:            /^\d+$/,
+      };
+
+      const allowedPattern = ALLOWED_WRITE_PRAGMAS[key.toLowerCase()];
+      if (!allowedPattern || !allowedPattern.test(value)) {
+        throw new Error(`Disallowed pragma: ${key}`);
+      }
+
       this._db.exec(`PRAGMA ${key} = ${value}`);
       return;
     }
 
-    // Read pragma: "key" — return the value
+    // Read pragma: "key" — only allow safe read-only pragma names
+    const ALLOWED_READ_PRAGMAS = new Set([
+      'journal_mode', 'synchronous', 'cache_size', 'page_size',
+      'foreign_keys', 'temp_store', 'auto_vacuum', 'locking_mode',
+      'wal_autocheckpoint', 'busy_timeout', 'mmap_size',
+      'user_version', 'application_id', 'encoding', 'integrity_check',
+      'quick_check', 'table_info', 'table_xinfo', 'index_list',
+    ]);
+
+    if (!ALLOWED_READ_PRAGMAS.has(trimmed.toLowerCase())) {
+      throw new Error(`Disallowed pragma: ${trimmed}`);
+    }
+
     const stmt = this._db.prepare(`PRAGMA ${trimmed}`);
     const result = stmt.get();
     stmt.finalize();

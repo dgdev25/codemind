@@ -6,9 +6,14 @@ const MAX_EMBED_TEXT_LENGTH = 32_000;
 type XenovaPipeline = (text: string, opts: { pooling: string; normalize: boolean }) => Promise<{ data: number[] }>;
 
 // tsc (CJS mode) rewrites import() to require(), which breaks ESM-only packages.
-// Using new Function bypasses that transformation at the cost of losing type inference.
+// The specifier is validated against an allowlist before use.
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
-const importESM = new Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+const _dynamicImport = new Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+const ESM_ALLOWLIST = new Set(['@xenova/transformers']);
+function importESM(specifier: string): Promise<unknown> {
+  if (!ESM_ALLOWLIST.has(specifier)) throw new Error(`Blocked ESM import: ${specifier}`);
+  return _dynamicImport(specifier);
+}
 
 export function buildEmbeddingDocument(node: Node): string {
   const parts: string[] = [`${node.kind}: ${node.qualifiedName}`];

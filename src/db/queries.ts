@@ -441,10 +441,10 @@ export class QueryBuilder {
   }
 
   /**
-   * Get all nodes in the database
+   * Get all nodes in the database, up to the specified limit.
    */
-  getAllNodes(): Node[] {
-    const rows = this.db.prepare('SELECT * FROM nodes').all() as NodeRow[];
+  getAllNodes(limit = 100_000): Node[] {
+    const rows = this.db.prepare('SELECT * FROM nodes LIMIT ?').all(limit) as NodeRow[];
     return rows.map(rowToNode);
   }
 
@@ -1469,7 +1469,7 @@ export class QueryBuilder {
    * Returns nodes that have never been embedded or whose content has changed
    * since their last embedding (detected via updated_at vs embedded_at).
    */
-  getNodesForVectorSync(): Node[] {
+  getNodesForVectorSync(limit = 50_000): Node[] {
     const rows = this.db.prepare(`
       SELECT n.*
       FROM nodes n
@@ -1478,7 +1478,8 @@ export class QueryBuilder {
          OR n.updated_at > vs.embedded_at
          OR vs.content_hash IS NULL
       ORDER BY n.updated_at DESC
-    `).all() as NodeRow[];
+      LIMIT ?
+    `).all(limit) as NodeRow[];
     return rows.map(rowToNode);
   }
 

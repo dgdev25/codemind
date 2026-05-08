@@ -15,10 +15,15 @@ import {
 import type { InstallLocation } from './config-writer';
 
 // Dynamic import helper — tsc compiles import() to require() in CJS mode,
-// which fails for ESM-only packages. This bypasses the transformation.
+// which fails for ESM-only packages. Specifier is validated against an allowlist.
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
-const importESM = new Function('specifier', 'return import(specifier)') as
-  (specifier: string) => Promise<typeof import('@clack/prompts')>;
+const _dynamicImport = new Function('specifier', 'return import(specifier)') as
+  (specifier: string) => Promise<unknown>;
+const INSTALLER_ESM_ALLOWLIST = new Set(['@clack/prompts']);
+const importESM = (specifier: string): Promise<typeof import('@clack/prompts')> => {
+  if (!INSTALLER_ESM_ALLOWLIST.has(specifier)) throw new Error(`Blocked ESM import: ${specifier}`);
+  return _dynamicImport(specifier) as Promise<typeof import('@clack/prompts')>;
+};
 
 /**
  * Format a number with commas

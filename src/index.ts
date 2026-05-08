@@ -5,6 +5,7 @@
  * knowledge graph from any codebase.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   CodeMindConfig,
@@ -27,7 +28,7 @@ import {
 } from './types';
 import { DatabaseConnection, getDatabasePath } from './db';
 import { QueryBuilder } from './db/queries';
-import { loadConfig, saveConfig, createDefaultConfig } from './config';
+import { loadConfig, saveConfig, createDefaultConfig, getConfigPath } from './config';
 import {
   isInitialized,
   createDirectory,
@@ -186,7 +187,12 @@ export class CodeMind {
   private async initVector(): Promise<void> {
     if (!this.config.vector?.enabled) return;
     const vcfg = this.config.vector;
-    const vi = new VectorIndex(vcfg.storagePath);
+    // Resolve storagePath relative to projectRoot to prevent path traversal
+    const resolvedStorage = path.resolve(this.projectRoot, vcfg.storagePath);
+    if (!resolvedStorage.startsWith(path.resolve(this.projectRoot))) {
+      throw new Error(`vector.storagePath must be within the project root`);
+    }
+    const vi = new VectorIndex(resolvedStorage);
     await vi.init({
       hnswM: vcfg.hnswM,
       efConstruction: vcfg.efConstruction,
@@ -259,12 +265,19 @@ export class CodeMind {
     // Create directory structure
     createDirectory(resolvedRoot);
 
-    // Create and save configuration
-    const config = createDefaultConfig(resolvedRoot);
-    if (options.config) {
-      Object.assign(config, options.config);
+    // Preserve any existing config.json (e.g. manually placed before init)
+    // rather than silently overwriting it with defaults.
+    const configPath = getConfigPath(resolvedRoot);
+    let config: CodeMindConfig;
+    if (fs.existsSync(configPath)) {
+      config = loadConfig(resolvedRoot);
+    } else {
+      config = createDefaultConfig(resolvedRoot);
+      if (options.config) {
+        Object.assign(config, options.config);
+      }
+      saveConfig(resolvedRoot, config);
     }
-    saveConfig(resolvedRoot, config);
 
     // Initialize database
     const dbPath = getDatabasePath(resolvedRoot);
@@ -298,12 +311,18 @@ export class CodeMind {
     // Create directory structure
     createDirectory(resolvedRoot);
 
-    // Create and save configuration
-    const config = createDefaultConfig(resolvedRoot);
-    if (options.config) {
-      Object.assign(config, options.config);
+    // Preserve any existing config.json rather than overwriting with defaults.
+    const configPath = getConfigPath(resolvedRoot);
+    let config: CodeMindConfig;
+    if (fs.existsSync(configPath)) {
+      config = loadConfig(resolvedRoot);
+    } else {
+      config = createDefaultConfig(resolvedRoot);
+      if (options.config) {
+        Object.assign(config, options.config);
+      }
+      saveConfig(resolvedRoot, config);
     }
-    saveConfig(resolvedRoot, config);
 
     // Initialize database
     const dbPath = getDatabasePath(resolvedRoot);
