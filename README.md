@@ -206,7 +206,7 @@ The `-i` flag runs the full index immediately. From here, the MCP server auto-sy
   │  (symbols)  (relations)  (hashes)            │
   │                                              │
   │  FTS5 full-text index                        │
-  │  HNSW vector index  (optional)               │
+  │  HNSW vector index  (optional, ruVector)     │
   └────────────────────┬────────────────────────┘
                        │  live sync via
                        │  OS file events
@@ -288,7 +288,7 @@ AFFECTED=$(git diff --name-only HEAD | codemind affected --stdin --quiet)
 
 ## Semantic Search
 
-CodeMind includes optional vector embeddings via `@ruvector/core` (HNSW index, 384-dimensional, scalar quantized).
+CodeMind includes optional vector embeddings via [ruVector](https://github.com/ruvnet/ruvector) (`@ruvector/core`) — an HNSW index with scalar quantization running entirely on-device.
 
 ```bash
 codemind index --build-vectors
